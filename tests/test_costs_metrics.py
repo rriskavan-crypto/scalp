@@ -145,3 +145,56 @@ def test_bootstrap_drawdowns_are_negative_and_ordered():
     dd = mc.summary["maks. drawdown %"]
     assert dd.loc["p5"] < dd.loc["p95"]
     assert mc.prob_profit > 0.9
+
+
+# ------------------------------------------------------------ validatsiya xulosasi
+def test_cost_config_is_derived_from_the_measured_spread():
+    """MT5 da xarajat spreaddan kelib chiqadi — bir tomon = spreadning yarmi."""
+    from scalpkit.config import Config
+    from scalpkit.validate import cost_config_from_spread
+
+    cfg = cost_config_from_spread(Config(), spread=20.0, price=40_000.0)
+    # (20/2) / 40000 = 0.00025 = 2.5 bps
+    assert cfg.cost.taker_fee_bps == pytest.approx(2.5)
+    assert cfg.cost.maker_fee_bps == pytest.approx(2.5)   # MT5 da maker chegirmasi yo'q
+    assert cfg.cost.apply_funding is False
+
+
+def test_commission_is_added_on_top_of_the_spread():
+    from scalpkit.config import Config
+    from scalpkit.validate import cost_config_from_spread
+
+    base = cost_config_from_spread(Config(), 20.0, 40_000.0)
+    with_comm = cost_config_from_spread(Config(), 20.0, 40_000.0,
+                                        commission_per_lot=4.0, contract_size=1.0)
+    assert with_comm.cost.taker_fee_bps > base.cost.taker_fee_bps
+    # 4 / 40000 = 0.0001 = 1 bps qo'shiladi
+    assert with_comm.cost.taker_fee_bps == pytest.approx(base.cost.taker_fee_bps + 1.0)
+
+
+@pytest.mark.parametrize("cost_r,days,oos,expected", [
+    (0.90, 400, {"trades": 300, "expectancy_r": 0.2}, "no_edge"),        # spread keng
+    (0.20, 100, {"trades": 0, "expectancy_r": 0.0}, "insufficient"),     # tarix qisqa
+    (0.20, 400, {"trades": 40, "expectancy_r": 0.2}, "insufficient"),    # savdolar kam
+    (0.20, 400, {"trades": 200, "expectancy_r": -0.1}, "no_edge"),       # ustunlik yo'q
+])
+def test_verdict_rules(cost_r, days, oos, expected):
+    from scalpkit.validate import _decide
+
+    v = _decide(cost_r, days, 180, 45, oos,
+                {"ci_low": -0.1, "ci_high": 0.3, "p_value": 0.4}, None)
+    assert v.code == expected
+
+
+def test_verdict_requires_confidence_interval_above_zero():
+    """Musbat ekspektatsiya yetarli emas — ishonch oralig'i ham nolni kesmasligi kerak."""
+    from scalpkit.validate import _decide
+
+    oos = {"trades": 250, "expectancy_r": 0.15}
+    unproven = _decide(0.2, 400, 180, 45, oos,
+                       {"ci_low": -0.05, "ci_high": 0.35, "p_value": 0.12}, None)
+    assert unproven.code == "not_proven"
+
+    proven = _decide(0.2, 400, 180, 45, oos,
+                     {"ci_low": 0.04, "ci_high": 0.26, "p_value": 0.01}, None)
+    assert proven.code == "trade"

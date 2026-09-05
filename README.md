@@ -113,9 +113,10 @@ set MT5_PASSWORD=***
 :: 1) Ulanish, spread va joriy signalni tekshirish (order yubormaydi)
 python -m scalpkit mt5-test --symbol BTCUSD
 
-:: 2) Brokeringizning o'z ma'lumotida backtest
-python -m scalpkit mt5-bars --symbol BTCUSD --count 100000 --out data/EXNESS_BTCUSD_5m.csv
-python -m scalpkit backtest --data data/EXNESS_BTCUSD_5m.csv
+:: 2) TO'LIQ TEKSHIRUV — bitta buyruq, aniq xulosa
+::    spreadni o'lchaydi -> xarajatni moslaydi -> backtest -> walk-forward
+::    -> Monte Carlo -> "savdo qilish mumkinmi" degan qat'iy javob
+python -m scalpkit mt5-validate --symbol BTCUSD --count 200000
 
 :: 3) DRY-RUN — order yuborilmaydi, faqat ko'rsatiladi
 python -m scalpkit trade --symbol BTCUSD
@@ -134,6 +135,20 @@ jonli o'lchaydi va xarajat `0.40R` dan oshsa savdoni **avtomatik rad etadi**:
 | $15 | 0.12 R | yaxshi |
 | $30 | 0.25 R | qabul qilarli |
 | $60 | 0.50 R | savdo qilinmaydi |
+
+### Xulosa qanday chiqadi
+
+`mt5-validate` "chiroyli grafik" emas, **qaror** beradi:
+
+| Xulosa | Shart |
+|---|---|
+| SAVDO QILMANG — spread juda keng | xarajat > 0.40 R |
+| QAROR CHIQARIB BO'LMAYDI | OOS savdolar < 100 yoki tarix qisqa |
+| SAVDO QILMANG — ustunlik yo'q | OOS ekspektatsiya ≤ 0 |
+| USTUNLIK ISBOTLANMAGAN | 95 % ishonch oralig'i nolni o'z ichiga oladi |
+| USTUNLIK BOR | OOS musbat **va** ishonch oralig'i to'liq noldan yuqorida |
+
+CSV allaqachon bo'lsa MT5'siz ham: `python -m scalpkit validate --data <csv> --spread 20`
 
 To'liq qo'llanma: **[docs/MT5_UZ.md](docs/MT5_UZ.md)**
 

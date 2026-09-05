@@ -98,7 +98,49 @@ Kod xarajat **0.40R dan oshsa savdoni avtomatik rad etadi**.
 
 ---
 
-## 4. Ikkinchi qadam — Exness ma'lumotida backtest
+## 4. Ikkinchi qadam — BITTA BUYRUQ bilan to'liq tekshiruv
+
+Bu asosiy savolga javob beradi: **strategiya sizning brokeringizda pul
+keltiradimi?**
+
+```bat
+python -m scalpkit mt5-validate --symbol BTCUSD --count 200000
+```
+
+Buyruq ketma-ket bajaradi:
+
+1. **Spreadni o'lchaydi** — 10 marta namuna olib, medianasini hisoblaydi
+2. **Xarajatni shunga moslaydi** — backtest sizning haqiqiy spreadingiz bilan ishlaydi
+3. **Barlarni yuklaydi** va CSV ga saqlaydi
+4. **To'liq tarixda backtest** qiladi
+5. **Walk-forward** — parametrlar faqat o'tmishdan tanlanadi, natija faqat ko'rilmagan kelajakdan
+6. **Monte Carlo** va statistik ishonchlilik testi
+7. **QAT'IY XULOSA** chiqaradi
+
+### Xulosa to'rt xil bo'lishi mumkin
+
+| Xulosa | Ma'nosi | Nima qilish kerak |
+|---|---|---|
+| **SAVDO QILMANG — spread juda keng** | xarajat > 0.40R | boshqa hisob turi yoki yuqoriroq TF |
+| **QAROR CHIQARIB BO'LMAYDI** | tarix yoki savdolar kam (< 100 OOS) | ko'proq tarix yuklang |
+| **SAVDO QILMANG — ustunlik yo'q** | OOS ekspektatsiya ≤ 0 | real pulga qo'ymang |
+| **USTUNLIK ISBOTLANMAGAN** | ishonch oralig'i nolni o'z ichiga oladi | demo'da davom eting |
+| **USTUNLIK BOR** | OOS musbat va ishonchli | demo'da 0.1 % risk bilan boshlang |
+
+> **Tarix yetarli bo'lishi uchun:** MT5 grafikda M5 ni ochib, **orqaga
+> aylantiring** (Home tugmasi) — terminal tarixni shundan keyin yuklaydi.
+> Tools → Options → Charts → "Max bars in chart" ni `9999999999` qiling.
+> 180+45 kunlik walk-forward uchun kamida **65 000 M5 bar** kerak.
+
+Ma'lumot allaqachon CSV da bo'lsa, MT5'siz ham ishlatish mumkin:
+
+```bat
+python -m scalpkit validate --data data/EXNESS_5m.csv --spread 20
+```
+
+---
+
+## 5. Uchinchi qadam — Exness ma'lumotida qo'lda backtest
 
 Brokeringizning **o'z narxlarida** tekshiring — bu Binance ma'lumotidan farq qiladi:
 
@@ -122,7 +164,7 @@ cost:
 
 ---
 
-## 5. Uchinchi qadam — DRY-RUN (order yuborilmaydi)
+## 6. To'rtinchi qadam — DRY-RUN (order yuborilmaydi)
 
 ```bat
 python -m scalpkit trade --symbol BTCUSD --once
@@ -142,7 +184,7 @@ backtest bilan solishtiring.
 
 ---
 
-## 6. To'rtinchi qadam — REAL savdo (faqat demo hisobda boshlang)
+## 7. Beshinchi qadam — REAL savdo (faqat demo hisobda boshlang)
 
 ```bat
 python -m scalpkit trade --symbol BTCUSD --live --risk 0.001
@@ -161,7 +203,7 @@ faqat shundan keyin      real hisob, yana 0.1 % dan
 
 ---
 
-## 7. Dastur nima qiladi
+## 8. Dastur nima qiladi
 
 Har yangi yopilgan M5 barda:
 
@@ -182,7 +224,7 @@ ochgan pozitsiyalaringizga aralashmaydi.
 
 ---
 
-## 8. Xatolar va yechimlari
+## 9. Xatolar va yechimlari
 
 | Xato | Sabab / yechim |
 |---|---|
@@ -200,7 +242,7 @@ ochgan pozitsiyalaringizga aralashmaydi.
 
 ---
 
-## 9. Server vaqti
+## 10. Server vaqti
 
 Exness serverlari odatda UTC+0 yoki UTC+3 da ishlaydi. Kod bu farqni
 **avtomatik aniqlaydi** va barlarni haqiqiy UTC ga keltiradi — seans
@@ -209,7 +251,7 @@ filtri (UTC 06:00–22:00) to'g'ri ishlashi uchun. `mt5-test` chiqishida
 
 ---
 
-## 10. Xavfsizlik qoidalari
+## 11. Xavfsizlik qoidalari
 
 1. **Demo bilan boshlang.** Kamida 1 oy.
 2. **Dastur ishlaganda kompyuter o'chmasin.** Uzilsa, ochiq pozitsiya

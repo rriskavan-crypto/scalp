@@ -11,11 +11,13 @@ Buyruqlar:
     walkforward  Ko'rilmagan ma'lumotda tekshirish — asosiy validatsiya
     montecarlo   Natijaning statistik ishonchliligi va drawdown taqsimoti
     signal       Oxirgi bar bo'yicha jonli signal va darajalar
+    validate     TO'LIQ TEKSHIRUV: backtest + walk-forward + xulosa
 
 MetaTrader 5 (Exness va boshqalar) — FAQAT Windows:
     mt5-test     Terminalga ulanish, hisob, spread va joriy signalni tekshirish
     mt5-bars     MT5 dan tarixiy barlarni CSV ga yuklash
     trade        Jonli savdo sikli (standart holatda DRY-RUN)
+    mt5-validate MT5 dan ma'lumot olib to'liq tekshiruv (bitta buyruq)
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ import argparse
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from .config import Config
@@ -197,6 +200,27 @@ def cmd_signal(args) -> None:
     print("\n" + format_signal(ls, cfg, cfg.risk.initial_equity))
 
 
+def cmd_validate(args) -> None:
+    from .validate import format_report, full_validation
+
+    df, cfg = _load(args), _config(args)
+    rep = full_validation(
+        df, cfg, symbol=cfg.symbol, spread=args.spread,
+        commission_per_lot=args.commission, folds=args.folds,
+        train_days=args.train_days, test_days=args.test_days,
+        max_combos=args.max_combos,
+    )
+    print("\n" + format_report(rep))
+    if args.out:
+        out = Path(args.out)
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "validation.txt").write_text(format_report(rep), encoding="utf-8")
+        if rep.wf is not None:
+            rep.wf.folds.to_csv(out / "wf_folds.csv", index=False)
+            rep.wf.oos_trades.to_csv(out / "wf_oos_trades.csv", index=False)
+        print(f"\nSaqlandi: {out}/")
+
+
 # ---------------------------------------------------------------- MT5 buyruqlari
 def _mt5_broker(args, dry_run: bool):
     from .broker.mt5broker import MT5Broker, MT5Credentials
@@ -304,6 +328,61 @@ def cmd_mt5_bars(args) -> None:
         print(f"  {df.index[0]:%Y-%m-%d %H:%M} - {df.index[-1]:%Y-%m-%d %H:%M} UTC")
         print(f"  Endi shu ma'lumotda backtest qiling:")
         print(f"    python -m scalpkit backtest --data {args.out}")
+    finally:
+        broker.disconnect()
+
+
+def cmd_mt5_validate(args) -> None:
+    """MT5 dan ma'lumot va spreadni olib, to'liq tekshiruvni bajaradi."""
+    import time as _time
+
+    from .validate import format_report, full_validation
+
+    cfg = _config(args)
+    broker = _mt5_broker(args, dry_run=True)
+    try:
+        symbol = broker.resolve_symbol(args.symbol or cfg.symbol)
+        spec = broker.symbol_spec(symbol)
+        cfg.symbol = symbol
+
+        # --- spreadni bir necha marta o'lchab, medianasini olamiz ---
+        print(f"  Spread o'lchanmoqda ({args.spread_samples} namuna)...")
+        samples = []
+        for _ in range(args.spread_samples):
+            try:
+                samples.append(broker.quote(symbol).spread)
+            except Exception:  # noqa: BLE001
+                pass
+            _time.sleep(args.spread_interval)
+        if not samples:
+            raise RuntimeError("Spreadni o'lchab bo'lmadi — bozor yopiq bo'lishi mumkin.")
+        spread = float(np.median(samples))
+        print(f"  Spread: median {spread:.2f}  "
+              f"(min {min(samples):.2f}, max {max(samples):.2f})")
+
+        print(f"  Barlar yuklanmoqda ({args.count:,} so'ralmoqda)...")
+        df = broker.bars(symbol, cfg.timeframe, count=args.count)
+        print(f"  {len(df):,} bar olindi: {df.index[0]:%Y-%m-%d} - {df.index[-1]:%Y-%m-%d}")
+        if args.save_data:
+            save_csv(df, args.save_data)
+            print(f"  Ma'lumot saqlandi: {args.save_data}")
+
+        rep = full_validation(
+            df, cfg, symbol=symbol, spread=spread,
+            commission_per_lot=args.commission,
+            contract_size=spec.contract_size, folds=args.folds,
+            train_days=args.train_days, test_days=args.test_days,
+            max_combos=args.max_combos,
+        )
+        print("\n" + format_report(rep))
+        if args.out:
+            out = Path(args.out)
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "validation.txt").write_text(format_report(rep), encoding="utf-8")
+            if rep.wf is not None:
+                rep.wf.folds.to_csv(out / "wf_folds.csv", index=False)
+                rep.wf.oos_trades.to_csv(out / "wf_oos_trades.csv", index=False)
+            print(f"\nSaqlandi: {out}/")
     finally:
         broker.disconnect()
 
@@ -421,6 +500,18 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--market", default="futures", choices=["futures", "spot"])
     s.set_defaults(func=cmd_signal)
 
+    s = sub.add_parser("validate", help="To'liq tekshiruv: backtest + walk-forward + xulosa")
+    common(s)
+    s.add_argument("--spread", type=float,
+                   help="O'lchangan spread (narx birligida). Berilsa xarajat shunga moslanadi")
+    s.add_argument("--commission", type=float, default=0.0, help="Bir lot uchun komissiya")
+    s.add_argument("--folds", type=int, help="Walk-forward bosqichlari (avtomatik)")
+    s.add_argument("--train-days", type=int, default=180)
+    s.add_argument("--test-days", type=int, default=45)
+    s.add_argument("--max-combos", type=int, default=120)
+    s.add_argument("--out", help="Natijalarni saqlash papkasi")
+    s.set_defaults(func=cmd_validate)
+
     # ------------------------------ MT5 (faqat Windows) ------------------------------
     def mt5_args(sp):
         sp.add_argument("--login", type=int, help="MT5 login (yoki MT5_LOGIN)")
@@ -442,6 +533,23 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--count", type=int, default=50_000)
     s.add_argument("--out", default="data/MT5_BTCUSD_5m.csv")
     s.set_defaults(func=cmd_mt5_bars)
+
+    s = sub.add_parser("mt5-validate",
+                       help="MT5 dan ma'lumot olib to'liq tekshiruv (bitta buyruq)")
+    common(s, data=False)
+    mt5_args(s)
+    s.add_argument("--count", type=int, default=200_000, help="So'raladigan barlar soni")
+    s.add_argument("--commission", type=float, default=0.0)
+    s.add_argument("--spread-samples", type=int, default=10)
+    s.add_argument("--spread-interval", type=float, default=1.0)
+    s.add_argument("--folds", type=int)
+    s.add_argument("--train-days", type=int, default=180)
+    s.add_argument("--test-days", type=int, default=45)
+    s.add_argument("--max-combos", type=int, default=120)
+    s.add_argument("--save-data", default="data/EXNESS_5m.csv",
+                   help="Yuklangan barlarni CSV ga saqlash")
+    s.add_argument("--out", default="out/exness")
+    s.set_defaults(func=cmd_mt5_validate)
 
     s = sub.add_parser("trade", help="Jonli savdo sikli (standart: DRY-RUN)")
     common(s, data=False)
