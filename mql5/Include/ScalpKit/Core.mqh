@@ -1,105 +1,99 @@
 //+------------------------------------------------------------------+
-//|                                                 ScalpKit_M5.mq5  |
-//|         BTC/USD M5 "Momentum Pullback" — tanlab-skalping EA      |
+//|                                    ScalpKit/Core.mqh             |
+//|   "M5 Momentum Pullback" strategiyasining umumiy yadrosi         |
 //|                                                                  |
-//|  Python versiyasi (scalpkit) bilan bir xil mantiq:               |
-//|    * rejim filtrlari -> setup -> trigger                         |
-//|    * limit kirish, 3 bar amal qiladi                             |
-//|    * TP1 +1.5R da 35 %, stop -0.35R ga (zararsizlikka EMAS)      |
-//|    * +2R da zararsizlik, +1.5R dan keyin 2.5 ATR trailing        |
-//|    * vaqt stopi faqat turg'un savdolarga                         |
-//|    * 0.5 % risk, kunlik zarar chegarasi, tanaffuslar             |
-//|    * spread keng bo'lsa savdo qilmaydi (xarajat > 0.40R)         |
-//|                                                                  |
-//|  MUHIM: signal faqat YOPILGAN barda hisoblanadi.                 |
+//|   Bu fayl mantiqni saqlaydi; parametrlar EA fayllarida           |
+//|   e'lon qilinadi va `ScalpKitConfig` orqali uzatiladi.           |
+//|   Shu tufayli BTCUSD va XAUUSD versiyalari bitta kod bazasidan   |
+//|   ishlaydi — tuzatish bittasida qilinsa, ikkalasiga ham tegadi.  |
 //+------------------------------------------------------------------+
 #property copyright "scalpkit"
 #property link      "https://github.com/rriskavan-crypto/scalp"
-#property version   "1.00"
-#property description "M5 Momentum Pullback — tanlab-skalping (BTCUSD)"
 
 #include <Trade\Trade.mqh>
 
 //==================================================================
-//  KIRISH PARAMETRLARI
+//  SOZLAMALAR STRUKTURASI
 //==================================================================
-input group "=== Rejim filtrlari ==="
-input double InpMinAtrPct        = 0.0020;  // ATR% minimal (0.0020 = 0.20 %)
-input double InpMaxAtrPct        = 0.0120;  // ATR% maksimal
-input double InpAdxMin           = 20.0;    // ADX minimal
-input bool   InpRequireHTF       = true;    // H1 yo'nalishi mos bo'lsin
-input bool   InpUseSession       = true;    // Seans filtri
-input int    InpSessionStartUTC  = 6;       // Seans boshi (UTC soat)
-input int    InpSessionEndUTC    = 22;      // Seans oxiri (UTC soat)
+struct ScalpKitConfig
+{
+   //--- === Rejim filtrlari ===
+   double   MinAtrPct;             // ATR% minimal (0.0020 = 0.20 %)
+   double   MaxAtrPct;             // ATR% maksimal
+   double   AdxMin;                // ADX minimal
+   bool     RequireHTF;            // H1 yo'nalishi mos bo'lsin
+   bool     UseSession;            // Seans filtri
+   int      SessionStartUTC;       // Seans boshi (UTC soat)
+   int      SessionEndUTC;         // Seans oxiri (UTC soat)
+   //--- === Setup ===
+   int      ImpulseLookback;       // Impuls oynasi (bar)
+   double   ImpulseBodyAtr;        // Impuls tanasi (ATR)
+   double   ImpulseVolZ;           // Impuls hajmi (z-score)
+   int      PullbackLookback;      // Qaytish oynasi (bar)
+   double   TouchAtr;              // EMA21 ga tegish zonasi (ATR)
+   double   RsiPullbackLong;       // RSI long uchun
+   double   RsiPullbackShort;      // RSI short uchun
+   //--- === Trigger ===
+   double   TriggerVolZ;           // Trigger hajmi (z-score)
+   double   TriggerClosePos;       // Bar ichida yopilish o'rni
+   double   MaxExtensionAtr;       // EMA21 dan maks. uzoqlik (ATR)
+   //--- === Kirish ===
+   bool     UseLimitEntry;         // Limit order (false = market)
+   double   EntryOffsetAtr;        // Limit siljishi (ATR)
+   int      EntryLimitBars;        // Limit amal qilish muddati (bar)
+   //--- === Stop ===
+   int      SwingLen;              // Swing oynasi (bar)
+   double   SlBufferAtr;           // Swing dan zaxira (ATR)
+   double   MinSlAtr;              // Stop minimal (ATR)
+   double   MaxSlAtr;              // Stop maksimal (ATR)
+   double   MinStopPct;            // Stop minimal (narx %)
+   double   MaxStopPct;            // Stop maksimal (narx %)
+   //--- === Chiqish (yutuqlar cheklanmaydi) ===
+   double   Tp1R;                  // TP1 (R)
+   double   Tp1Fraction;           // TP1 da yopiladigan ulush
+   double   Tp2R;                  // TP2 (R)
+   double   Tp1StopToR;            // TP1 dan keyin stop (R)
+   double   BeTriggerR;            // Zararsizlikka o'tish (R)
+   double   BeOffsetR;             // Zararsizlik zaxirasi (R)
+   double   TrailAfterR;           // Trailing boshlanishi (R)
+   double   TrailAtrMult;          // Trailing masofasi (ATR)
+   double   TrailMinStepAtr;       // Trailing minimal qadami (ATR)
+   int      TimeStopBars;          // Vaqt stopi (bar)
+   double   TimeStopMinR;          // Vaqt stopi shu R gacha
+   bool     ExitOnEmaCross;        // TP1 dan keyin EMA21 chiqishi
+   //--- === Risk ===
+   double   RiskPerTrade;          // Savdo boshiga risk (0.005 = 0.5 %)
+   double   MaxLeverage;           // Maksimal leverage
+   int      MaxTradesPerDay;       // Kunlik savdolar chegarasi
+   double   DailyLossLimit;        // Kunlik zarar chegarasi
+   int      MaxConsecLosses;       // Ketma-ket zararlar
+   int      CooldownBars;          // Zarardan keyin tanaffus (bar)
+   int      StreakCooldown;        // Seriyadan keyin tanaffus (bar)
+   double   HalveRiskDD;           // Shu drawdownda risk yarmiga
+   //--- === Xarajat himoyasi ===
+   double   MaxCostR;              // Xarajat shundan oshsa savdo yo'q
+   //--- === Hafta chegarasi (oltin/forex uchun) ===
+   bool     WeekendFlat;           // Hafta oxiriga pozitsiyasiz kirish
+   int      WeekCloseHourUTC;      // Juma shu soatdan keyin yangi savdo yo'q
+   int      WeekCloseDow;          // 0=dushanba ... 4=juma
+   int      WeekOpenSkipBars;      // Hafta ochilishidan keyin kutiladigan barlar
+   //--- === Texnik ===
+   int      EmaFast;
+   int      EmaMid;
+   int      EmaSlow;
+   int      AtrLen;
+   int      RsiLen;
+   int      AdxLen;
+   int      DonchianLen;
+   int      VolZLen;
+   int      HtfEma;
+   long     Magic;                 // Magic raqam
+   int      Deviation;             // Maks. sirpanish (punkt)
+   int      ServerUtcOffset;       // Server-UTC farqi (soat), -99 = avto
+   bool     Verbose;               // Batafsil log
+};
 
-input group "=== Setup ==="
-input int    InpImpulseLookback  = 12;      // Impuls oynasi (bar)
-input double InpImpulseBodyAtr   = 0.8;     // Impuls tanasi (ATR)
-input double InpImpulseVolZ      = 1.0;     // Impuls hajmi (z-score)
-input int    InpPullbackLookback = 4;       // Qaytish oynasi (bar)
-input double InpTouchAtr         = 0.25;    // EMA21 ga tegish zonasi (ATR)
-input double InpRsiPullbackLong  = 45.0;    // RSI long uchun
-input double InpRsiPullbackShort = 55.0;    // RSI short uchun
-
-input group "=== Trigger ==="
-input double InpTriggerVolZ      = -0.2;    // Trigger hajmi (z-score)
-input double InpTriggerClosePos  = 0.5;     // Bar ichida yopilish o'rni
-input double InpMaxExtensionAtr  = 1.0;     // EMA21 dan maks. uzoqlik (ATR)
-
-input group "=== Kirish ==="
-input bool   InpUseLimitEntry    = true;    // Limit order (false = market)
-input double InpEntryOffsetAtr   = 0.15;    // Limit siljishi (ATR)
-input int    InpEntryLimitBars   = 3;       // Limit amal qilish muddati (bar)
-
-input group "=== Stop ==="
-input int    InpSwingLen         = 5;       // Swing oynasi (bar)
-input double InpSlBufferAtr      = 0.25;    // Swing dan zaxira (ATR)
-input double InpMinSlAtr         = 1.0;     // Stop minimal (ATR)
-input double InpMaxSlAtr         = 2.2;     // Stop maksimal (ATR)
-input double InpMinStopPct       = 0.0015;  // Stop minimal (narx %)
-input double InpMaxStopPct       = 0.0200;  // Stop maksimal (narx %)
-
-input group "=== Chiqish (yutuqlar cheklanmaydi) ==="
-input double InpTp1R             = 1.5;     // TP1 (R)
-input double InpTp1Fraction      = 0.35;    // TP1 da yopiladigan ulush
-input double InpTp2R             = 3.5;     // TP2 (R)
-input double InpTp1StopToR       = -0.35;   // TP1 dan keyin stop (R)
-input double InpBeTriggerR       = 2.0;     // Zararsizlikka o'tish (R)
-input double InpBeOffsetR        = 0.05;    // Zararsizlik zaxirasi (R)
-input double InpTrailAfterR      = 1.5;     // Trailing boshlanishi (R)
-input double InpTrailAtrMult     = 2.5;     // Trailing masofasi (ATR)
-input double InpTrailMinStepAtr  = 0.15;    // Trailing minimal qadami (ATR)
-input int    InpTimeStopBars     = 24;      // Vaqt stopi (bar)
-input double InpTimeStopMinR     = 0.5;     // Vaqt stopi shu R gacha
-input bool   InpExitOnEmaCross   = true;    // TP1 dan keyin EMA21 chiqishi
-
-input group "=== Risk ==="
-input double InpRiskPerTrade     = 0.005;   // Savdo boshiga risk (0.005 = 0.5 %)
-input double InpMaxLeverage      = 5.0;     // Maksimal leverage
-input int    InpMaxTradesPerDay  = 8;       // Kunlik savdolar chegarasi
-input double InpDailyLossLimit   = 0.03;    // Kunlik zarar chegarasi
-input int    InpMaxConsecLosses  = 3;       // Ketma-ket zararlar
-input int    InpCooldownBars     = 6;       // Zarardan keyin tanaffus (bar)
-input int    InpStreakCooldown   = 24;      // Seriyadan keyin tanaffus (bar)
-input double InpHalveRiskDD      = 0.08;    // Shu drawdownda risk yarmiga
-
-input group "=== Xarajat himoyasi ==="
-input double InpMaxCostR         = 0.40;    // Xarajat shundan oshsa savdo yo'q
-
-input group "=== Texnik ==="
-input int    InpEmaFast          = 21;
-input int    InpEmaMid           = 55;
-input int    InpEmaSlow          = 200;
-input int    InpAtrLen           = 14;
-input int    InpRsiLen           = 7;
-input int    InpAdxLen           = 14;
-input int    InpDonchianLen      = 20;
-input int    InpVolZLen          = 50;
-input int    InpHtfEma           = 50;
-input long   InpMagic            = 20260905; // Magic raqam
-input int    InpDeviation        = 30;       // Maks. sirpanish (punkt)
-input int    InpServerUtcOffset  = -99;      // Server-UTC farqi (soat), -99 = avto
-input bool   InpVerbose          = true;     // Batafsil log
+ScalpKitConfig g_cfg;
 
 //==================================================================
 //  GLOBAL HOLAT
@@ -111,6 +105,7 @@ int      hAtr = INVALID_HANDLE, hRsi = INVALID_HANDLE, hAdx = INVALID_HANDLE;
 int      hHtfEma = INVALID_HANDLE;
 
 datetime g_lastBarTime = 0;
+int      g_barsSinceGap = 9999;   // hafta/bayram uzilishidan keyingi barlar
 int      g_serverUtcOffset = 0;
 int      g_barCounter = 0;          // tanaffuslarni sanash uchun
 int      g_blockUntilBar = -1;
@@ -203,25 +198,25 @@ void StatePersist(const int idx)
 
 void Log(const string message)
 {
-   if(InpVerbose)
+   if(g_cfg.Verbose)
       Print(message);
 }
 
 //==================================================================
 //  ISHGA TUSHIRISH
 //==================================================================
-int OnInit()
+int ScalpKit_OnInit()
 {
    if(Period() != PERIOD_M5)
       Print("OGOHLANTIRISH: EA M5 uchun mo'ljallangan, joriy TF = ", EnumToString(Period()));
 
-   hEmaFast = iMA(_Symbol, PERIOD_M5, InpEmaFast, 0, MODE_EMA, PRICE_CLOSE);
-   hEmaMid  = iMA(_Symbol, PERIOD_M5, InpEmaMid,  0, MODE_EMA, PRICE_CLOSE);
-   hEmaSlow = iMA(_Symbol, PERIOD_M5, InpEmaSlow, 0, MODE_EMA, PRICE_CLOSE);
-   hAtr     = iATR(_Symbol, PERIOD_M5, InpAtrLen);
-   hRsi     = iRSI(_Symbol, PERIOD_M5, InpRsiLen, PRICE_CLOSE);
-   hAdx     = iADX(_Symbol, PERIOD_M5, InpAdxLen);
-   hHtfEma  = iMA(_Symbol, PERIOD_H1, InpHtfEma, 0, MODE_EMA, PRICE_CLOSE);
+   hEmaFast = iMA(_Symbol, PERIOD_M5, g_cfg.EmaFast, 0, MODE_EMA, PRICE_CLOSE);
+   hEmaMid  = iMA(_Symbol, PERIOD_M5, g_cfg.EmaMid,  0, MODE_EMA, PRICE_CLOSE);
+   hEmaSlow = iMA(_Symbol, PERIOD_M5, g_cfg.EmaSlow, 0, MODE_EMA, PRICE_CLOSE);
+   hAtr     = iATR(_Symbol, PERIOD_M5, g_cfg.AtrLen);
+   hRsi     = iRSI(_Symbol, PERIOD_M5, g_cfg.RsiLen, PRICE_CLOSE);
+   hAdx     = iADX(_Symbol, PERIOD_M5, g_cfg.AdxLen);
+   hHtfEma  = iMA(_Symbol, PERIOD_H1, g_cfg.HtfEma, 0, MODE_EMA, PRICE_CLOSE);
 
    if(hEmaFast == INVALID_HANDLE || hEmaMid == INVALID_HANDLE ||
       hEmaSlow == INVALID_HANDLE || hAtr == INVALID_HANDLE ||
@@ -231,13 +226,13 @@ int OnInit()
       return INIT_FAILED;
    }
 
-   Trade.SetExpertMagicNumber(InpMagic);
-   Trade.SetDeviationInPoints(InpDeviation);
+   Trade.SetExpertMagicNumber(g_cfg.Magic);
+   Trade.SetDeviationInPoints(g_cfg.Deviation);
    Trade.SetTypeFillingBySymbol(_Symbol);
    Trade.LogLevel(LOG_LEVEL_ERRORS);
 
-   g_serverUtcOffset = (InpServerUtcOffset == -99) ? DetectServerUtcOffset()
-                                                   : InpServerUtcOffset;
+   g_serverUtcOffset = (g_cfg.ServerUtcOffset == -99) ? DetectServerUtcOffset()
+                                                   : g_cfg.ServerUtcOffset;
    g_peakEquity      = AccountInfoDouble(ACCOUNT_EQUITY);
    g_dayStartEquity  = g_peakEquity;
    g_currentDay      = 0;
@@ -246,13 +241,13 @@ int OnInit()
    RecoverExistingPositions();
 
    PrintFormat("ScalpKit M5 ishga tushdi | %s | magic %I64d | server-UTC farqi %+d soat",
-               _Symbol, InpMagic, g_serverUtcOffset);
+               _Symbol, g_cfg.Magic, g_serverUtcOffset);
    PrintFormat("  Risk %.2f%% | kunlik chegara %.1f%% | maks. xarajat %.2fR",
-               InpRiskPerTrade * 100.0, InpDailyLossLimit * 100.0, InpMaxCostR);
+               g_cfg.RiskPerTrade * 100.0, g_cfg.DailyLossLimit * 100.0, g_cfg.MaxCostR);
    return INIT_SUCCEEDED;
 }
 
-void OnDeinit(const int reason)
+void ScalpKit_OnDeinit(const int reason)
 {
    IndicatorRelease(hEmaFast);
    IndicatorRelease(hEmaMid);
@@ -295,6 +290,42 @@ datetime UtcDayOf(const datetime serverTime)
 }
 
 //------------------------------------------------------------------
+//  HAFTA CHEGARASI
+//
+//  Ikki xavfni qoplaydi:
+//    1. Hafta oxiri gapi — juma kechqurun ochilgan pozitsiya dushanba
+//       narx sakragan holda ochiladi va stop ishlamaydi;
+//    2. Ochilish spreadi — hafta boshida spread bir necha barobar keng.
+//------------------------------------------------------------------
+bool IsPastWeekCutoff(const datetime serverTime)
+{
+   if(!g_cfg.WeekendFlat)
+      return false;
+   datetime utc = serverTime - (datetime)(g_serverUtcOffset * 3600);
+   MqlDateTime dt;
+   TimeToStruct(utc, dt);
+   int dow = (dt.day_of_week == 0) ? 6 : dt.day_of_week - 1;   // 0 = dushanba
+   return (dow == g_cfg.WeekCloseDow && dt.hour >= g_cfg.WeekCloseHourUTC);
+}
+
+// Hafta/bayram uzilishidan keyin yetarli bar o'tdimi
+bool IsWeekOpenSettled()
+{
+   if(!g_cfg.WeekendFlat || g_cfg.WeekOpenSkipBars <= 0)
+      return true;
+   return (g_barsSinceGap >= g_cfg.WeekOpenSkipBars);
+}
+
+// Bar vaqtidagi katta uzilishni aniqlaydi (hafta oxiri yoki bayram)
+void UpdateWeekGapCounter(const datetime barTime, const datetime prevBarTime)
+{
+   if(prevBarTime > 0 && (barTime - prevBarTime) > 4 * 3600)
+      g_barsSinceGap = 0;
+   else if(g_barsSinceGap < 100000)
+      g_barsSinceGap++;
+}
+
+//------------------------------------------------------------------
 //  Terminal qayta ishga tushganda ochiq pozitsiyalarni tiklaydi
 //------------------------------------------------------------------
 void RecoverExistingPositions()
@@ -305,7 +336,7 @@ void RecoverExistingPositions()
       ulong ticket = PositionGetTicket(i);
       if(ticket == 0 || !PositionSelectByTicket(ticket))
          continue;
-      if(PositionGetInteger(POSITION_MAGIC) != InpMagic)
+      if(PositionGetInteger(POSITION_MAGIC) != g_cfg.Magic)
          continue;
       if(PositionGetString(POSITION_SYMBOL) != _Symbol)
          continue;
@@ -416,8 +447,8 @@ SignalResult BuildSignal()
    SignalResult out;
    out.side = 0; out.stopPrice = 0.0; out.entryRef = 0.0; out.atr = 0.0; out.reject = "";
 
-   const int needBars = MathMax(InpDonchianLen + InpImpulseLookback + 5,
-                       MathMax(InpVolZLen + InpImpulseLookback + 5, 70));
+   const int needBars = MathMax(g_cfg.DonchianLen + g_cfg.ImpulseLookback + 5,
+                       MathMax(g_cfg.VolZLen + g_cfg.ImpulseLookback + 5, 70));
 
    MqlRates rates[];
    ArraySetAsSeries(rates, true);
@@ -459,22 +490,33 @@ SignalResult BuildSignal()
 
    //---------------- REJIM ----------------
    double atrPct = a / cl;
-   if(atrPct < InpMinAtrPct || atrPct > InpMaxAtrPct)
+   if(atrPct < g_cfg.MinAtrPct || atrPct > g_cfg.MaxAtrPct)
    {
       out.reject = StringFormat("ATR%% oynadan tashqarida (%.4f%%)", atrPct * 100.0);
       return out;
    }
-   if(adx[S] < InpAdxMin)
+   if(adx[S] < g_cfg.AdxMin)
    {
       out.reject = StringFormat("ADX past (%.1f)", adx[S]);
       return out;
    }
-   if(InpUseSession)
+   if(IsPastWeekCutoff(rates[S].time))
+   {
+      out.reject = "hafta chegarasi — yangi savdo yo'q";
+      return out;
+   }
+   if(!IsWeekOpenSettled())
+   {
+      out.reject = StringFormat("hafta ochilishi (%d/%d bar)",
+                                g_barsSinceGap, g_cfg.WeekOpenSkipBars);
+      return out;
+   }
+   if(g_cfg.UseSession)
    {
       int h = UtcHourOf(rates[S].time);
-      bool inSession = (InpSessionStartUTC <= InpSessionEndUTC)
-                     ? (h >= InpSessionStartUTC && h < InpSessionEndUTC)
-                     : (h >= InpSessionStartUTC || h < InpSessionEndUTC);
+      bool inSession = (g_cfg.SessionStartUTC <= g_cfg.SessionEndUTC)
+                     ? (h >= g_cfg.SessionStartUTC && h < g_cfg.SessionEndUTC)
+                     : (h >= g_cfg.SessionStartUTC || h < g_cfg.SessionEndUTC);
       if(!inSession)
       {
          out.reject = StringFormat("seansdan tashqarida (UTC %02d:00)", h);
@@ -486,7 +528,7 @@ SignalResult BuildSignal()
    bool trendUp = (emaF[S] > emaM[S] && emaM[S] > emaS[S] && cl > emaS[S]);
    bool trendDn = (emaF[S] < emaM[S] && emaM[S] < emaS[S] && cl < emaS[S]);
 
-   if(InpRequireHTF)
+   if(g_cfg.RequireHTF)
    {
       double htf[];
       if(!CopyMany(hHtfEma, 0, 0, 3, htf))
@@ -514,17 +556,17 @@ SignalResult BuildSignal()
    // Har bir impuls bari O'Z oldingi Donchian kanaliga nisbatan tekshiriladi
    // (Python dagi dc_high_prev = dc_high.shift(1) bilan bir xil).
    bool hadImpulseUp = false, hadImpulseDn = false;
-   for(int i = S + 1; i <= S + InpImpulseLookback; i++)
+   for(int i = S + 1; i <= S + g_cfg.ImpulseLookback; i++)
    {
       if(atr[i] <= 0.0)
          continue;
       double bodyAtr = (rates[i].close - rates[i].open) / atr[i];
-      double vz      = VolZAt(tv, i, InpVolZLen);
-      bool strongBody = (MathAbs(bodyAtr) >= InpImpulseBodyAtr && vz >= InpImpulseVolZ);
+      double vz      = VolZAt(tv, i, g_cfg.VolZLen);
+      bool strongBody = (MathAbs(bodyAtr) >= g_cfg.ImpulseBodyAtr && vz >= g_cfg.ImpulseVolZ);
 
       // Donchian buzilishi shu bar uchun O'Z oldingi kanaliga nisbatan
       double hiPrev = -DBL_MAX, loPrev = DBL_MAX;
-      for(int k = i + 1; k <= i + InpDonchianLen; k++)
+      for(int k = i + 1; k <= i + g_cfg.DonchianLen; k++)
       {
          hiPrev = MathMax(hiPrev, rates[k].high);
          loPrev = MathMin(loPrev, rates[k].low);
@@ -537,32 +579,32 @@ SignalResult BuildSignal()
 
    //---------------- SETUP: orqaga qaytish ----------------
    bool touchedUp = false, touchedDn = false, rsiDip = false, rsiPop = false;
-   for(int i = S; i < S + InpPullbackLookback; i++)
+   for(int i = S; i < S + g_cfg.PullbackLookback; i++)
    {
-      if(rates[i].low  <= emaF[i] + InpTouchAtr * atr[i]) touchedUp = true;
-      if(rates[i].high >= emaF[i] - InpTouchAtr * atr[i]) touchedDn = true;
-      if(rsi[i] <= InpRsiPullbackLong)  rsiDip = true;
-      if(rsi[i] >= InpRsiPullbackShort) rsiPop = true;
+      if(rates[i].low  <= emaF[i] + g_cfg.TouchAtr * atr[i]) touchedUp = true;
+      if(rates[i].high >= emaF[i] - g_cfg.TouchAtr * atr[i]) touchedDn = true;
+      if(rsi[i] <= g_cfg.RsiPullbackLong)  rsiDip = true;
+      if(rsi[i] >= g_cfg.RsiPullbackShort) rsiPop = true;
    }
 
    //---------------- TRIGGER ----------------
    double rng = rates[S].high - rates[S].low;
    double closePos = (rng > 0.0) ? (rates[S].close - rates[S].low) / rng : 0.5;
-   double volZ = VolZAt(tv, S, InpVolZLen);
+   double volZ = VolZAt(tv, S, g_cfg.VolZLen);
 
    bool trigUp = (rates[S].close > rates[S + 1].high)
               && (rates[S].close > emaF[S])
               && (rates[S].close > rates[S].open)
-              && (closePos >= InpTriggerClosePos)
-              && (volZ >= InpTriggerVolZ)
-              && (rates[S].close <= emaF[S] + InpMaxExtensionAtr * a);
+              && (closePos >= g_cfg.TriggerClosePos)
+              && (volZ >= g_cfg.TriggerVolZ)
+              && (rates[S].close <= emaF[S] + g_cfg.MaxExtensionAtr * a);
 
    bool trigDn = (rates[S].close < rates[S + 1].low)
               && (rates[S].close < emaF[S])
               && (rates[S].close < rates[S].open)
-              && (closePos <= 1.0 - InpTriggerClosePos)
-              && (volZ >= InpTriggerVolZ)
-              && (rates[S].close >= emaF[S] - InpMaxExtensionAtr * a);
+              && (closePos <= 1.0 - g_cfg.TriggerClosePos)
+              && (volZ >= g_cfg.TriggerVolZ)
+              && (rates[S].close >= emaF[S] - g_cfg.MaxExtensionAtr * a);
 
    bool longSig  = trendUp && hadImpulseUp && touchedUp && rsiDip && trigUp;
    bool shortSig = trendDn && hadImpulseDn && touchedDn && rsiPop && trigDn;
@@ -583,12 +625,12 @@ SignalResult BuildSignal()
    //---------------- STOP VA KIRISH DARAJASI ----------------
    int side = longSig ? 1 : -1;
    double swing = longSig ? DBL_MAX : -DBL_MAX;
-   for(int i = S; i < S + InpSwingLen; i++)
+   for(int i = S; i < S + g_cfg.SwingLen; i++)
       swing = longSig ? MathMin(swing, rates[i].low) : MathMax(swing, rates[i].high);
 
    out.side      = side;
-   out.stopPrice = swing - side * InpSlBufferAtr * a;
-   out.entryRef  = rates[S].close - side * InpEntryOffsetAtr * a;
+   out.stopPrice = swing - side * g_cfg.SlBufferAtr * a;
+   out.entryRef  = rates[S].close - side * g_cfg.EntryOffsetAtr * a;
    return out;
 }
 
@@ -659,9 +701,9 @@ double EffectiveRisk()
 {
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    if(g_peakEquity <= 0.0)
-      return InpRiskPerTrade;
+      return g_cfg.RiskPerTrade;
    double dd = 1.0 - equity / g_peakEquity;
-   return (dd >= InpHalveRiskDD) ? InpRiskPerTrade * 0.5 : InpRiskPerTrade;
+   return (dd >= g_cfg.HalveRiskDD) ? g_cfg.RiskPerTrade * 0.5 : g_cfg.RiskPerTrade;
 }
 
 // Bo'sh satr = savdoga ruxsat bor
@@ -669,14 +711,14 @@ string RiskBlockReason()
 {
    if(g_barCounter < g_blockUntilBar)
       return StringFormat("tanaffus (yana %d bar)", g_blockUntilBar - g_barCounter);
-   if(g_tradesToday >= InpMaxTradesPerDay)
-      return StringFormat("kunlik savdolar chegarasi (%d)", InpMaxTradesPerDay);
+   if(g_tradesToday >= g_cfg.MaxTradesPerDay)
+      return StringFormat("kunlik savdolar chegarasi (%d)", g_cfg.MaxTradesPerDay);
 
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    if(g_dayStartEquity > 0.0)
    {
       double dayPnl = (equity - g_dayStartEquity) / g_dayStartEquity;
-      if(dayPnl <= -InpDailyLossLimit)
+      if(dayPnl <= -g_cfg.DailyLossLimit)
          return StringFormat("kunlik zarar chegarasi (%.2f%%)", dayPnl * 100.0);
    }
    if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED))
@@ -689,10 +731,10 @@ string RiskBlockReason()
 void OnLossRegistered()
 {
    g_consecLosses++;
-   int cooldown = InpCooldownBars;
-   if(g_consecLosses >= InpMaxConsecLosses)
+   int cooldown = g_cfg.CooldownBars;
+   if(g_consecLosses >= g_cfg.MaxConsecLosses)
    {
-      cooldown = InpStreakCooldown;
+      cooldown = g_cfg.StreakCooldown;
       g_consecLosses = 0;
       Log(StringFormat("Ketma-ket zararlar — %d bar tanaffus.", cooldown));
    }
@@ -774,7 +816,7 @@ void AdoptOrphanPositions()
       ulong ticket = PositionGetTicket(i);
       if(ticket == 0 || !PositionSelectByTicket(ticket))
          continue;
-      if(PositionGetInteger(POSITION_MAGIC) != InpMagic)
+      if(PositionGetInteger(POSITION_MAGIC) != g_cfg.Magic)
          continue;
       if(PositionGetString(POSITION_SYMBOL) != _Symbol)
          continue;
@@ -816,14 +858,14 @@ void ExpirePendingOrders()
       ulong ticket = OrderGetTicket(i);
       if(ticket == 0 || !OrderSelect(ticket))
          continue;
-      if(OrderGetInteger(ORDER_MAGIC) != InpMagic)
+      if(OrderGetInteger(ORDER_MAGIC) != g_cfg.Magic)
          continue;
       if(OrderGetString(ORDER_SYMBOL) != _Symbol)
          continue;
 
       datetime placed = (datetime)OrderGetInteger(ORDER_TIME_SETUP);
       int barsOld = (int)((TimeCurrent() - placed) / (PeriodSeconds(PERIOD_M5)));
-      if(barsOld >= InpEntryLimitBars)
+      if(barsOld >= g_cfg.EntryLimitBars)
       {
          if(Trade.OrderDelete(ticket))
          {
@@ -831,6 +873,38 @@ void ExpirePendingOrders()
             StateRemove(ticket);
          }
       }
+   }
+}
+
+void CancelAllPending()
+{
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket == 0 || !OrderSelect(ticket))
+         continue;
+      if(OrderGetInteger(ORDER_MAGIC) != g_cfg.Magic)
+         continue;
+      if(OrderGetString(ORDER_SYMBOL) != _Symbol)
+         continue;
+      if(Trade.OrderDelete(ticket))
+         StateRemove(ticket);
+   }
+}
+
+void CloseAllPositions(const string reason)
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket))
+         continue;
+      if(PositionGetInteger(POSITION_MAGIC) != g_cfg.Magic)
+         continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol)
+         continue;
+      if(Trade.PositionClose(ticket))
+         Log(StringFormat("#%I64u yopildi (%s)", ticket, reason));
    }
 }
 
@@ -846,24 +920,24 @@ void TryOpen(const SignalResult &sig)
    if(bid <= 0.0 || ask <= 0.0)
       return;
 
-   double entry = InpUseLimitEntry ? sig.entryRef : ((sig.side > 0) ? ask : bid);
+   double entry = g_cfg.UseLimitEntry ? sig.entryRef : ((sig.side > 0) ? ask : bid);
 
    //--- stop masofasi: struktura -> ATR chegarasi -> foiz chegarasi
    double dist = sig.side * (entry - sig.stopPrice);
-   dist = MathMax(dist, InpMinSlAtr * a);
-   dist = MathMin(dist, InpMaxSlAtr * a);
-   dist = MathMax(dist, InpMinStopPct * entry);
-   dist = MathMin(dist, InpMaxStopPct * entry);
+   dist = MathMax(dist, g_cfg.MinSlAtr * a);
+   dist = MathMin(dist, g_cfg.MaxSlAtr * a);
+   dist = MathMax(dist, g_cfg.MinStopPct * entry);
+   dist = MathMin(dist, g_cfg.MaxStopPct * entry);
    if(dist <= 0.0)
       return;
 
    //--- XARAJAT HIMOYASI
    // To'liq savdo BIR spread turadi: ask'da olib, bid'da sotasiz.
    double costR = spread / dist;
-   if(costR > InpMaxCostR)
+   if(costR > g_cfg.MaxCostR)
    {
       Log(StringFormat("Savdo o'tkazib yuborildi: xarajat %.3fR > %.2fR "
-                       "(spread %.2f, stop %.2f)", costR, InpMaxCostR, spread, dist));
+                       "(spread %.2f, stop %.2f)", costR, g_cfg.MaxCostR, spread, dist));
       return;
    }
 
@@ -892,10 +966,10 @@ void TryOpen(const SignalResult &sig)
    }
 
    double leverage = (lots * contract * entry) / MathMax(equity, 1e-9);
-   if(leverage > InpMaxLeverage)
+   if(leverage > g_cfg.MaxLeverage)
    {
       Log(StringFormat("Savdo o'tkazib yuborildi: leverage %.1fx > %.1fx",
-                       leverage, InpMaxLeverage));
+                       leverage, g_cfg.MaxLeverage));
       return;
    }
 
@@ -903,21 +977,21 @@ void TryOpen(const SignalResult &sig)
    int dg = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
    entry  = NormalizeDouble(entry, dg);
    double sl = entry - sig.side * dist;
-   double tp = entry + sig.side * InpTp2R * dist;
+   double tp = entry + sig.side * g_cfg.Tp2R * dist;
    ClampStops(sig.side, entry, sl, tp);
 
    string dir = (sig.side > 0) ? "LONG" : "SHORT";
    PrintFormat("%s %s | kirish %.*f (%s) | stop %.*f | TP %.*f | %.2f lot | "
                "risk %.2f (%.2f%%) | xarajat %.3fR",
-               dir, _Symbol, dg, entry, InpUseLimitEntry ? "limit" : "market",
+               dir, _Symbol, dg, entry, g_cfg.UseLimitEntry ? "limit" : "market",
                dg, sl, dg, tp, lots, actualRisk,
                actualRisk / MathMax(equity, 1e-9) * 100.0, costR);
 
    bool ok = false;
    ulong ticket = 0;
-   if(InpUseLimitEntry)
+   if(g_cfg.UseLimitEntry)
    {
-      datetime expiry = TimeCurrent() + InpEntryLimitBars * PeriodSeconds(PERIOD_M5);
+      datetime expiry = TimeCurrent() + g_cfg.EntryLimitBars * PeriodSeconds(PERIOD_M5);
       ok = (sig.side > 0)
          ? Trade.BuyLimit(lots, entry, _Symbol, sl, tp, ORDER_TIME_SPECIFIED, expiry, "scalpkit")
          : Trade.SellLimit(lots, entry, _Symbol, sl, tp, ORDER_TIME_SPECIFIED, expiry, "scalpkit");
@@ -961,7 +1035,7 @@ void TryOpen(const SignalResult &sig)
    st.entryBar    = g_barCounter;
    st.tp1Done     = false;
    st.beMoved     = false;
-   st.isPending   = InpUseLimitEntry;
+   st.isPending   = g_cfg.UseLimitEntry;
    StatePersist(StateAdd(st));
 
    g_tradesToday++;
@@ -1032,9 +1106,9 @@ void ManagePositions()
       double nowR  = side * (price - entry) / R;
 
       //--- TP1: qisman yopish
-      if(!g_states[i].tp1Done && nowR >= InpTp1R)
+      if(!g_states[i].tp1Done && nowR >= g_cfg.Tp1R)
       {
-         double part = NormalizeVolume(volume * InpTp1Fraction);
+         double part = NormalizeVolume(volume * g_cfg.Tp1Fraction);
          double vmin = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
          if(part > 0.0 && (volume - part) >= vmin - 1e-9)
          {
@@ -1052,17 +1126,17 @@ void ManagePositions()
          }
          // TP1 dan keyin stop -0.35R ga (zararsizlikka EMAS)
          double appliedSl = sl;
-         if(MoveStop(ticket, side, entry + side * InpTp1StopToR * R, sl, "tp1_stop", appliedSl))
+         if(MoveStop(ticket, side, entry + side * g_cfg.Tp1StopToR * R, sl, "tp1_stop", appliedSl))
             sl = appliedSl;
          StatePersist(i);
       }
 
       //--- zararsizlikka o'tish (faqat +2R dan keyin)
-      if(!g_states[i].beMoved && moveR >= InpBeTriggerR)
+      if(!g_states[i].beMoved && moveR >= g_cfg.BeTriggerR)
       {
          double spread = SymbolInfoDouble(_Symbol, SYMBOL_ASK)
                        - SymbolInfoDouble(_Symbol, SYMBOL_BID);
-         double target = entry + side * (InpBeOffsetR * R + spread);
+         double target = entry + side * (g_cfg.BeOffsetR * R + spread);
          double appliedBe = sl;
          if(MoveStop(ticket, side, target, sl, "breakeven", appliedBe))
          {
@@ -1073,10 +1147,10 @@ void ManagePositions()
       }
 
       //--- trailing (mayda qadamlarda surilmaydi)
-      if(moveR >= InpTrailAfterR && atr0 > 0.0)
+      if(moveR >= g_cfg.TrailAfterR && atr0 > 0.0)
       {
-         double trail = g_states[i].bestPrice - side * InpTrailAtrMult * atr0;
-         double minStep = InpTrailMinStepAtr * atr0;
+         double trail = g_states[i].bestPrice - side * g_cfg.TrailAtrMult * atr0;
+         double minStep = g_cfg.TrailMinStepAtr * atr0;
          if(sl <= 0.0 || MathAbs(trail - sl) >= minStep)
          {
             double appliedTrail = sl;
@@ -1091,7 +1165,7 @@ void ManagePositions()
       //--- vaqt stopi: faqat hech qayoqqa ketmagan savdolar
       datetime openTime = (datetime)PositionGetInteger(POSITION_TIME);
       int barsHeld = (int)((TimeCurrent() - openTime) / PeriodSeconds(PERIOD_M5));
-      if(barsHeld >= InpTimeStopBars && moveR < InpTimeStopMinR)
+      if(barsHeld >= g_cfg.TimeStopBars && moveR < g_cfg.TimeStopMinR)
       {
          if(Trade.PositionClose(ticket))
          {
@@ -1102,7 +1176,7 @@ void ManagePositions()
       }
 
       //--- TP1 dan keyin EMA21 chiqishi
-      if(InpExitOnEmaCross && g_states[i].tp1Done)
+      if(g_cfg.ExitOnEmaCross && g_states[i].tp1Done)
       {
          double emaF = 0.0;
          if(CopyOne(hEmaFast, 0, 1, emaF))
@@ -1140,7 +1214,7 @@ bool HasOpenExposure()
    {
       ulong ticket = PositionGetTicket(i);
       if(ticket != 0 && PositionSelectByTicket(ticket)
-         && PositionGetInteger(POSITION_MAGIC) == InpMagic
+         && PositionGetInteger(POSITION_MAGIC) == g_cfg.Magic
          && PositionGetString(POSITION_SYMBOL) == _Symbol)
          return true;
    }
@@ -1148,14 +1222,14 @@ bool HasOpenExposure()
    {
       ulong ticket = OrderGetTicket(i);
       if(ticket != 0 && OrderSelect(ticket)
-         && OrderGetInteger(ORDER_MAGIC) == InpMagic
+         && OrderGetInteger(ORDER_MAGIC) == g_cfg.Magic
          && OrderGetString(ORDER_SYMBOL) == _Symbol)
          return true;
    }
    return false;
 }
 
-void OnTick()
+void ScalpKit_OnTick()
 {
    // Ochiq pozitsiyalar har tikda kuzatiladi — TP1, trailing va
    // zararsizlik bar yopilishini kutmaydi.
@@ -1167,9 +1241,21 @@ void OnTick()
       return;
 
    g_barCounter++;
+   UpdateWeekGapCounter(iTime(_Symbol, PERIOD_M5, 0), iTime(_Symbol, PERIOD_M5, 1));
    SyncClosedTrades();
    ExpirePendingOrders();
    RollDay(iTime(_Symbol, PERIOD_M5, 1));
+
+   // Hafta chegarasi: kutayotgan orderlarni bekor qilib, pozitsiyani yopamiz.
+   // Bu KIRISH nuqtasida tekshiriladi — signal juma 18:55 da ruxsat etilgan
+   // bo'lishi mumkin, lekin limit 19:00 dan keyin to'ldirilsa, pozitsiya
+   // hafta oxiriga qolib ketadi.
+   if(IsPastWeekCutoff(TimeCurrent()))
+   {
+      CancelAllPending();
+      CloseAllPositions("weekend_flat");
+      return;
+   }
 
    if(HasOpenExposure())
       return;
@@ -1199,7 +1285,7 @@ void OnTick()
 //      ekspektatsiya (R) x sqrt(savdolar soni)
 //  Kam savdoli tasodifiy natijalar jazolanadi.
 //==================================================================
-double OnTester()
+double ScalpKit_OnTester()
 {
    if(g_closedTrades < 20)
       return -1000.0;
@@ -1210,7 +1296,7 @@ double OnTester()
 //==================================================================
 //  TEST YAKUNIDA XULOSA
 //==================================================================
-void OnTesterDeinit()
+void ScalpKit_OnTesterDeinit()
 {
    if(g_closedTrades <= 0)
    {

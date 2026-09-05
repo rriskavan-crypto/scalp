@@ -5,6 +5,7 @@
 Buyruqlar:
     fetch        Binance'dan tarixiy M5 ma'lumot yuklash
     synth        Sintetik test ma'lumoti yaratish (internetsiz ishlash uchun)
+    profiles     Instrument profillari (btcusd / xauusd) va ular farqi
     costs        Xarajat / zararsizlik jadvallari
     backtest     Strategiyani tarixda sinash
     optimize     Parametr qidiruvi (walk-forward'siz ISHONMANG)
@@ -37,6 +38,8 @@ from .features import build_features, warmup_bars
 from .metrics import compute_metrics
 from .montecarlo import bootstrap_equity, edge_significance_test, monte_carlo_report
 from .optimize import grid_search, robustness_check
+from .profiles import available as available_profiles
+from .profiles import compare_table, get_profile, profile_for_symbol
 from .report import save_report, text_report
 from .strategies import available, get_strategy
 from .walkforward import walk_forward, walk_forward_report
@@ -64,6 +67,16 @@ def _load(args) -> pd.DataFrame:
 
 def _config(args) -> Config:
     cfg = Config.load(getattr(args, "config", None))
+
+    # Profil boshqa hamma narsadan OLDIN qo'llanadi, shunda buyruq
+    # qatoridagi aniq qiymatlar uni bosib o'tadi.
+    name = getattr(args, "profile", None)
+    if name:
+        cfg = get_profile(name).apply(cfg)
+    elif getattr(args, "symbol", None):
+        cfg = profile_for_symbol(args.symbol).apply(cfg)
+        cfg.symbol = args.symbol
+
     if getattr(args, "strategy", None):
         cfg.strategy.name = args.strategy
     if getattr(args, "equity", None):
@@ -84,7 +97,8 @@ def cmd_fetch(args) -> None:
 
 
 def cmd_synth(args) -> None:
-    df = generate_synthetic(n_bars=args.bars, start=args.start, seed=args.seed)
+    df = generate_synthetic(n_bars=args.bars, start=args.start, seed=args.seed,
+                            asset=args.asset)
     save_csv(df, args.out)
     print(f"  Sintetik ma'lumot: {len(df):,} bar → {args.out}")
     print("  DIQQAT: bu sun'iy ma'lumot. Undan olingan foyda ko'rsatkichlari")
@@ -198,6 +212,23 @@ def cmd_signal(args) -> None:
         df = _load(args)
     ls = evaluate_now(df, cfg, equity=cfg.risk.initial_equity)
     print("\n" + format_signal(ls, cfg, cfg.risk.initial_equity))
+
+
+def cmd_profiles(args) -> None:
+    print("\n=== INSTRUMENT PROFILLARI ===\n")
+    print(compare_table())
+    print()
+    for name in available_profiles():
+        prof = get_profile(name)
+        print(f"{name.upper():<10} {prof.description}")
+        print(f"{'':<10} savdo vaqti : {prof.calendar.describe()}")
+        print(f"{'':<10} nomlari     : {', '.join(prof.symbols)}")
+        params = prof.strategy
+        stop = float(params['min_atr_pct']) * prof.typical_price * 1.4
+        print(f"{'':<10} eng past volatilitetda xarajat: "
+              f"{prof.typical_spread / stop:.3f} R "
+              f"(spread {prof.typical_spread:g}, stop {stop:.2f})")
+        print()
 
 
 def cmd_validate(args) -> None:
@@ -343,7 +374,11 @@ def cmd_mt5_validate(args) -> None:
     try:
         symbol = broker.resolve_symbol(args.symbol or cfg.symbol)
         spec = broker.symbol_spec(symbol)
+        # Profil brokerdagi haqiqiy nomdan aniqlanadi (BTCUSDm, XAUUSDm ...)
+        if not getattr(args, "profile", None):
+            cfg = profile_for_symbol(symbol).apply(cfg)
         cfg.symbol = symbol
+        print(f"  Profil: {profile_for_symbol(symbol).name}")
 
         # --- spreadni bir necha marta o'lchab, medianasini olamiz ---
         print(f"  Spread o'lchanmoqda ({args.spread_samples} namuna)...")
@@ -431,6 +466,9 @@ def build_parser() -> argparse.ArgumentParser:
             sp.add_argument("--start", help="Boshlanish sanasi (YYYY-MM-DD)")
             sp.add_argument("--end", help="Tugash sanasi (YYYY-MM-DD)")
         sp.add_argument("--config", help="YAML konfiguratsiya fayli")
+        sp.add_argument("--profile", choices=available_profiles(),
+                        help="Instrument profili (btcusd / xauusd). "
+                             "Berilmasa --symbol dan aniqlanadi")
         sp.add_argument("--strategy", choices=available(), help="Strategiya nomi")
         sp.add_argument("--equity", type=float, help="Boshlang'ich kapital")
         sp.add_argument("--risk", type=float, help="Bitta savdodagi risk (0.005 = 0.5 %%)")
@@ -448,11 +486,16 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_fetch)
 
     s = sub.add_parser("synth", help="Sintetik ma'lumot yaratish")
+    s.add_argument("--asset", default="btc", choices=["btc", "gold"],
+                   help="btc = 24/7 kripto, gold = savdo kalendari bilan")
     s.add_argument("--bars", type=int, default=120_000)
     s.add_argument("--start", default="2024-01-01")
     s.add_argument("--seed", type=int, default=42)
     s.add_argument("--out", default="data/SYNTH_5m.csv")
     s.set_defaults(func=cmd_synth)
+
+    s = sub.add_parser("profiles", help="Instrument profillarini ko'rsatish")
+    s.set_defaults(func=cmd_profiles)
 
     s = sub.add_parser("costs", help="Xarajat va zararsizlik jadvallari")
     common(s, data=False)

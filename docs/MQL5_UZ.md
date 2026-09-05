@@ -1,28 +1,63 @@
 # ScalpKit MQL5 Expert Advisor — o'rnatish va test
 
-`mql5/Experts/ScalpKit_M5.mq5` — Python strategiyasining MetaTrader 5
-uchun to'liq amalga oshirilishi. Barcha parametrlar **aynan bir xil**
-(buni `tests/test_mql5_parity.py` avtomatik tekshiradi).
+Ikkita EA bor, **bitta umumiy yadro** ustida:
+
+| Fayl | Instrument | Magic |
+|---|---|---|
+| `mql5/Experts/ScalpKit_BTC_M5.mq5` | BTCUSD | 20260905 |
+| `mql5/Experts/ScalpKit_XAU_M5.mq5` | XAUUSD (oltin) | 20260906 |
+| `mql5/Include/ScalpKit/Core.mqh` | umumiy savdo mantig'i | — |
+
+Mantiq bitta joyda — tuzatish ikkalasiga ham tegadi. Farq faqat
+**kalibrlangan standart qiymatlarda**, va ular `scalpkit/profiles.py`
+dan avtomatik generatsiya qilinadi (`tools/gen_mql5_experts.py`),
+shuning uchun Python va MQL5 versiyalari ajralib keta olmaydi.
 
 > **Bu EA sizga men qila olmagan narsani beradi:** MT5 Strategy Tester
-> Exness'ning o'z ma'lumotida, sizning kompyuteringizda ishlaydi.
+> brokeringizning o'z ma'lumotida, sizning kompyuteringizda ishlaydi.
+
+---
+
+## 0. Nima uchun oltinga alohida sozlama kerak
+
+BTC uchun mo'ljallangan qiymatlarni oltinga qo'yish **ishlamaydi** —
+kod ishlaydi, lekin hech qachon savdo qilmaydi:
+
+| | BTCUSD | XAUUSD |
+|---|---|---|
+| M5 ATR(14) | ~0.22 % narxdan | ~0.07 % narxdan |
+| `InpMinAtrPct` | 0.0020 | **0.00045** |
+| `InpMinStopPct` | 0.0015 | **0.0004** |
+| Seans (UTC) | 06–22 | **07–20** |
+| Dam olish kunlari | savdo qiladi | **yopiq** |
+| Lot hajmi | 1 BTC | **100 unsiya** |
+| Magic | 20260905 | 20260906 |
+
+BTC ning `MinAtrPct = 0.20 %` filtri oltin barlarining **~1 %** ini
+o'tkazadi — ya'ni robot jim turadi va siz sababini bilmaysiz.
+
+Oltinning qo'shimcha qoidasi — **hafta chegarasi**: juma 19:00 UTC dan
+keyin yangi savdo ochilmaydi va ochiq pozitsiya yopiladi. Sababi:
+hafta oxiri gapi stop-lossni chetlab o'tadi.
 
 ---
 
 ## 1. O'rnatish
 
 1. MT5 da: **File → Open Data Folder**
-2. `MQL5\Experts\` papkasiga o'ting
-3. `ScalpKit_M5.mq5` faylini shu yerga nusxalang
+2. `MQL5\Include\` ichida `ScalpKit` papkasini yarating va
+   `Core.mqh` ni shu yerga nusxalang
+   (yakuniy yo'l: `MQL5\Include\ScalpKit\Core.mqh`)
+3. `ScalpKit_BTC_M5.mq5` va `ScalpKit_XAU_M5.mq5` ni `MQL5\Experts\` ga nusxalang
 4. MT5 da **F4** bosing (MetaEditor ochiladi)
-5. Chapdagi Navigator'da `ScalpKit_M5.mq5` ni toping va **F7** bosing (Compile)
+5. Har bir EA faylini ochib **F7** bosing (Compile)
 6. `0 errors, 0 warnings` chiqishi kerak
 
-> **Diqqat:** bu fayl Linux muhitida yozilgan, u yerda MQL5 kompilyatori
-> yo'q (MetaEditor faqat Windows uchun). Kod sintaksis va parametr
-> mosligi bo'yicha avtomatik tekshirilgan (`tests/test_mql5_parity.py`,
-> 57 ta taqqoslash), lekin **haqiqiy kompilyatsiyadan o'tmagan**.
-> Agar F7 xato bersa — xato matnini menga yuboring, darhol tuzataman.
+> **Diqqat:** bu fayllar Linux muhitida yozilgan, u yerda MQL5
+> kompilyatori yo'q (MetaEditor faqat Windows uchun). Kod sintaksis va
+> parametr mosligi bo'yicha avtomatik tekshirilgan, lekin **haqiqiy
+> kompilyatsiyadan o'tmagan**. Agar F7 xato bersa — xato matnini menga
+> yuboring, darhol tuzataman.
 7. MT5 ga qayting → Navigator → Expert Advisors → `ScalpKit_M5` paydo bo'ladi
 
 **Terminal sozlamasi (majburiy):**
@@ -40,8 +75,8 @@ Bu yerda strategiyaning ishlash-ishlamasligi aniqlanadi.
 
 | Sozlama | Qiymat |
 |---|---|
-| Expert | `ScalpKit_M5` |
-| Symbol | `BTCUSD` (yoki `BTCUSDm` — MarketWatch'dagi nomingiz) |
+| Expert | `ScalpKit_BTC_M5` yoki `ScalpKit_XAU_M5` |
+| Symbol | `BTCUSD` / `XAUUSD` (Exness'da `BTCUSDm`, `XAUUSDm` bo'lishi mumkin) |
 | Period | **M5** |
 | Modelling | **Every tick based on real ticks** ← eng aniq |
 | Dates | imkon qadar uzoq (kamida 1 yil) |
@@ -100,18 +135,20 @@ ScalpKit yakuni: 214 savdo | ekspektatsiya +0.061 R | g'alaba 43.9% | jami +13.1
 
 ## 3. Jonli ishlatish
 
-1. BTCUSD M5 grafigini oching
-2. `ScalpKit_M5` ni grafikka tashlang
+1. Kerakli instrument M5 grafigini oching (BTCUSD yoki XAUUSD)
+2. Mos EA ni grafikka tashlang (`ScalpKit_BTC_M5` yoki `ScalpKit_XAU_M5`)
 3. Sozlamalarni tekshiring, **OK**
 4. Yuqori o'ng burchakda ☺ tabassum belgisi chiqishi kerak
    (agar ☹ bo'lsa — algo savdo o'chirilgan)
 
 EA jurnalga har bir qarorni yozadi: signal, hajm, xarajat, stop harakatlari.
 
-> **Faqat BITTA grafikda ishlating.** EA bir vaqtda bitta pozitsiya
-> ochadi va boshqa nusxasi bilan to'qnashadi.
+> **Har bir instrument uchun faqat BITTA grafik.** EA bir vaqtda bitta
+> pozitsiya ochadi va o'zining boshqa nusxasi bilan to'qnashadi.
+> BTC va oltin EA'larini bir vaqtda ishlatish mumkin — ular turli
+> magic raqamlardan foydalanadi.
 
-> EA `magic = 20260905` bilan **faqat o'z savdolariga tegadi**.
+> EA magic raqami bilan **faqat o'z savdolariga tegadi**.
 > Qo'lda ochgan pozitsiyalaringizga aralashmaydi.
 
 ---
@@ -149,7 +186,8 @@ TP1 dan keyin close < EMA21 -> yopiladi
 | `InpMaxCostR` | 0.40 | Spread keng bo'lsa savdo qilmaydi |
 | `InpUseLimitEntry` | true | `false` = market (kafolatlangan ijro, qimmatroq) |
 | `InpServerUtcOffset` | -99 | −99 = avtomatik aniqlash |
-| `InpMagic` | 20260905 | Bir nechta nusxa ishlatsangiz o'zgartiring |
+| `InpMagic` | 20260905 / 20260906 | Bir nechta nusxa ishlatsangiz o'zgartiring |
+| `InpWeekendFlat` | oltinda `true` | Juma kechqurun pozitsiyani yopadi |
 | `InpVerbose` | true | Testda `false` qiling — tezroq ishlaydi |
 
 ---
@@ -167,6 +205,8 @@ TP1 dan keyin close < EMA21 -> yopiladi
 | "hajm minimal lotdan kichik" | Depozit kichik yoki stop keng. **Riskni oshirmang** |
 | "xarajat > 0.40R" | Spread keng. EA sizni himoya qildi |
 | Testda savdo juda kam | Uzoqroq davr oling yoki `InpAdxMin` ni pasaytiring |
+| Oltinda umuman savdo yo'q | BTC EA'sini oltinga qo'ymadingizmi? `ScalpKit_XAU_M5` ishlating |
+| `Core.mqh topilmadi` | Fayl `MQL5\Include\ScalpKit\Core.mqh` yo'lida bo'lishi kerak |
 
 ---
 
@@ -181,7 +221,15 @@ TP1 dan keyin close < EMA21 -> yopiladi
 | Tekshiruv | `walkforward` buyrug'i | Strategy Tester **Forward** |
 
 Parametrlar bir xil ekanligi `pytest tests/test_mql5_parity.py` bilan
-tekshiriladi — 57 ta taqqoslash.
+tekshiriladi — ikkala instrument bo'yicha, jumladan EA fayllari joriy
+profillardan generatsiya qilinganligi.
+
+**EA fayllarini qo'lda tahrirlamang.** Parametrni o'zgartirish kerak
+bo'lsa, `scalpkit/profiles.py` da o'zgartiring va qayta generatsiya qiling:
+
+```bash
+python tools/gen_mql5_experts.py
+```
 
 ---
 

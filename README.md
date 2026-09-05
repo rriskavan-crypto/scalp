@@ -1,7 +1,18 @@
-# scalpkit — BTC/USDT M5 skalping strategiyasi va tekshiruv to'plami
+# scalpkit — M5 skalping strategiyasi va tekshiruv to'plami
 
-**"M5 Momentum Pullback"** — Bitcoin uchun 5 daqiqalik grafikda ishlaydigan
+**"M5 Momentum Pullback"** — 5 daqiqalik grafikda ishlaydigan
 tanlab-skalping strategiyasi, uni **halol tekshirish** vositalari bilan birga.
+
+Ikkita instrument qo'llab-quvvatlanadi, har biri **alohida kalibrlangan**:
+
+| Profil | Instrument | M5 ATR% | Savdo vaqti | MQL5 EA |
+|---|---|---|---|---|
+| `btcusd` | Bitcoin | ~0.22 % | 24/7 | `ScalpKit_BTC_M5.mq5` |
+| `xauusd` | Oltin | ~0.07 % | Du–Ju, juma 19:00 UTC gacha | `ScalpKit_XAU_M5.mq5` |
+
+```bash
+python -m scalpkit profiles     # farqlarni ko'rish
+```
 
 ---
 
@@ -71,9 +82,11 @@ python -m scalpkit fetch --start 2021-01-01 --out data/BTCUSDT_5m.csv
 # 2. Xarajat matematikasini ko'rish
 python -m scalpkit costs
 
-# 3. Backtest
-python -m scalpkit backtest --config config/default.yaml \
-    --data data/BTCUSDT_5m.csv --out out/baseline
+# 3. Backtest (profil simvoldan avtomatik aniqlanadi)
+python -m scalpkit backtest --profile btcusd --data data/BTCUSDT_5m.csv --out out/baseline
+
+# Oltin uchun:
+python -m scalpkit backtest --profile xauusd --data data/XAUUSD_5m.csv
 
 # 4. ASOSIY TEKSHIRUV — walk-forward
 python -m scalpkit walkforward --config config/default.yaml \
@@ -141,9 +154,10 @@ To'liq savdo **bir** spread turadi (ask'da olib, bid'da sotasiz) — ikki emas.
 
 ### MQL5 Expert Advisor
 
-`mql5/Experts/ScalpKit_M5.mq5` — xuddi shu strategiyaning MT5 uchun to'liq
-amalga oshirilishi. Python'siz ishlaydi va **Strategy Tester** orqali
-brokeringizning o'z ma'lumotida walk-forward o'tkazish imkonini beradi:
+Ikkita EA, bitta umumiy yadro (`mql5/Include/ScalpKit/Core.mqh`):
+`ScalpKit_BTC_M5.mq5` va `ScalpKit_XAU_M5.mq5`. Python'siz ishlaydi va
+**Strategy Tester** orqali brokeringizning o'z ma'lumotida walk-forward
+o'tkazish imkonini beradi:
 
 ```
 Strategy Tester -> Settings -> Forward: 1/4 -> Custom max -> Start
@@ -154,9 +168,9 @@ Strategy Tester -> Settings -> Forward: 1/4 -> Custom max -> Start
 EA `OnTester()` da Python bilan bir xil mezonni qaytaradi:
 `ekspektatsiya × √savdolar`.
 
-Ikki amalga oshirishning parametrlari bir xil ekanligi avtomatik
-tekshiriladi (`tests/test_mql5_parity.py` — 57 ta taqqoslash), shunda
-backtest va real savdo ajralib ketmaydi.
+EA fayllari `scalpkit/profiles.py` dan **generatsiya qilinadi**
+(`tools/gen_mql5_experts.py`), shuning uchun Python va MQL5 versiyalari
+ajralib keta olmaydi. Buni `tests/test_mql5_parity.py` qulflaydi.
 
 Qo'llanma: **[docs/MQL5_UZ.md](docs/MQL5_UZ.md)**
 
@@ -200,6 +214,7 @@ qo'shilishdan kelib chiqadi.
 SHORT — to'liq oyna aksi.
 
 To'liq spetsifikatsiya: **[docs/STRATEGY_UZ.md](docs/STRATEGY_UZ.md)**
+Oltin uchun farqlar: **[docs/GOLD_UZ.md](docs/GOLD_UZ.md)**
 
 ### Chiqish tuzilmasi nima uchun aynan shunday
 
@@ -246,7 +261,7 @@ Dvigatel matematikasi testlar bilan tasdiqlangan: nol xarajatda to'liq
 stop **aynan −1.000R** beradi.
 
 ```bash
-python -m pytest tests/ -q      # 138 test
+python -m pytest tests/ -q      # 133 test
 ```
 
 ---
@@ -269,6 +284,7 @@ scalpkit/
   walkforward.py     ASOSIY VALIDATSIYA
   optimize.py        parametr qidiruvi + barqarorlik tekshiruvi
   montecarlo.py      bootstrap, risk of ruin, statistik ishonchlilik
+  profiles.py        INSTRUMENT PROFILLARI — kalibrlangan parametrlar va kalendar
   live.py            jonli signal (faqat o'qiydi, order yubormaydi)
   broker/
     base.py          umumiy broker interfeysi
@@ -281,11 +297,17 @@ docs/
   RISK_UZ.md         risk boshqaruvi
   VALIDATION_UZ.md   tekshirish tartibi
   CHECKLIST_UZ.md    kundalik nazorat ro'yxati
+  GOLD_UZ.md         XAUUSD: nima uchun alohida kalibrlash kerak
   MT5_UZ.md          MetaTrader 5 / Exness qo'llanmasi
   MQL5_UZ.md         Expert Advisor: o'rnatish va Strategy Tester
 mql5/
+  Include/ScalpKit/
+    Core.mqh         umumiy savdo mantig'i (ikkala EA uchun)
   Experts/
-    ScalpKit_M5.mq5  MQL5 EA — Python bilan bir xil mantiq
+    ScalpKit_BTC_M5.mq5   BTCUSD — generatsiya qilingan
+    ScalpKit_XAU_M5.mq5   XAUUSD — generatsiya qilingan
+tools/
+  gen_mql5_experts.py     EA fayllarini profillardan generatsiya qiladi
 ```
 
 ---

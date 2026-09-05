@@ -83,7 +83,8 @@ class Evaluator:
             cfg.risk.initial_equity = initial_equity
         res = run_backtest(f, strat.generate(f), cfg, strat.params,
                            warmup=warmup_bars(params))
-        m = compute_metrics(res.trades, res.equity, cfg.risk.initial_equity, res.days)
+        m = compute_metrics(res.trades, res.equity, cfg.risk.initial_equity, res.days,
+                            days_per_year=cfg.days_per_year)
         return m, res
 
 
@@ -94,8 +95,8 @@ def grid_search(df: pd.DataFrame, cfg: Config, strategy_name: str,
                 seed: int = 0,
                 verbose: bool = True) -> pd.DataFrame:
     """Parametr fazosini qidiradi va natijalarni reyting bo'yicha qaytaradi."""
-    strat_cls = get_strategy(strategy_name).__class__
-    space = space or strat_cls.param_space()
+    base_strategy = get_strategy(strategy_name, cfg.strategy.params)
+    space = space or base_strategy.param_space(base_strategy.params)
     obj_fn = OBJECTIVES[objective]
 
     keys = list(space)

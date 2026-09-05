@@ -234,3 +234,19 @@ def test_spread_cost_paths_agree():
 
     assert direct == pytest.approx(engine)
     assert direct == pytest.approx(0.10)
+
+
+def test_validation_cost_uses_median_atr_not_the_last_bar():
+    """Xarajat bahosi oxirgi barning ATR'iga bog'liq bo'lmasligi kerak.
+
+    Regressiya testi: ilgari `atr = feats["atr"].iloc[-1]` ishlatilardi.
+    Ma'lumot tinch soatda tugasa, xarajat bir necha barobar oshib
+    ko'rinib, vosita noto'g'ri "spread juda keng" xulosasini chiqarardi.
+    """
+    import inspect
+
+    from scalpkit import validate
+
+    source = inspect.getsource(validate.full_validation)
+    assert 'feats["atr"].iloc[-1]' not in source, "oxirgi bar ATR'i qaytib kelgan"
+    assert "median()" in source

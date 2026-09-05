@@ -21,7 +21,8 @@ def _fmt(value: float, kind: str = "f") -> str:
 
 def text_report(result: BacktestResult, title: str = "BACKTEST NATIJASI") -> str:
     m = compute_metrics(
-        result.trades, result.equity, result.config.risk.initial_equity, result.days
+        result.trades, result.equity, result.config.risk.initial_equity, result.days,
+        days_per_year=result.config.days_per_year,
     )
     c = result.config
     w = 66
@@ -168,6 +169,7 @@ def save_report(result: BacktestResult, outdir: str | Path,
     result.equity.to_csv(paths["equity"], index_label="time")
     paths["chart"].write_text(equity_svg(result), encoding="utf-8")
     m = compute_metrics(result.trades, result.equity,
-                        result.config.risk.initial_equity, result.days)
+                        result.config.risk.initial_equity, result.days,
+                        days_per_year=result.config.days_per_year)
     pd.Series(m).to_csv(paths["metrics"], header=["value"], index_label="metric")
     return paths

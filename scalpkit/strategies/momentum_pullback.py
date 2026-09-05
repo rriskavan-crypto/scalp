@@ -49,7 +49,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .base import Strategy, rolling_any, session_mask
+from .base import Strategy, rolling_any, session_mask, week_guard_mask
 
 
 class MomentumPullback(Strategy):
@@ -64,6 +64,11 @@ class MomentumPullback(Strategy):
         "use_session_filter": True,
         "session_start_hour": 6,
         "session_end_hour": 22,
+        # --- hafta chegarasi (oltin/forex uchun; kriptoda o'chirilgan) ---
+        "weekend_flat": False,
+        "week_close_hour_utc": 19,
+        "week_close_dow": 4,          # 0 = dushanba, 4 = juma
+        "week_open_skip_bars": 6,
         # --- setup ---
         "impulse_lookback": 12,
         "impulse_body_atr": 0.8,
@@ -120,6 +125,11 @@ class MomentumPullback(Strategy):
         )
         if p["use_session_filter"]:
             regime &= session_mask(f, int(p["session_start_hour"]), int(p["session_end_hour"]))
+        if p.get("weekend_flat", False):
+            regime &= week_guard_mask(
+                f.index, int(p["week_close_dow"]), int(p["week_close_hour_utc"]),
+                int(p["week_open_skip_bars"]),
+            )
 
         trend_up = (
             (f["ema_fast"] > f["ema_mid"])
@@ -214,9 +224,18 @@ class MomentumPullback(Strategy):
         )
 
     @classmethod
-    def param_space(cls) -> dict[str, list[Any]]:
+    def param_space(cls, base: dict[str, Any] | None = None) -> dict[str, list[Any]]:
+        """Optimizatsiya uchun qidiruv fazosi.
+
+        Volatilitetga bog'liq chegaralar joriy sozlamaga **nisbatan**
+        quriladi, qattiq kodlanmaydi. Aks holda BTC uchun yozilgan
+        `min_atr_pct = 0.0015...0.0030` oltinda (ATR% mediani 0.055 %)
+        barcha barlarni bloklab, walk-forward'da nol savdo beradi.
+        """
+        p = {**cls.defaults, **(base or {})}
+        atr0 = float(p["min_atr_pct"])
         return {
-            "min_atr_pct": [0.0015, 0.0020, 0.0025, 0.0030],
+            "min_atr_pct": [round(atr0 * k, 6) for k in (0.7, 0.85, 1.0, 1.25, 1.5)],
             "adx_min": [16.0, 20.0, 24.0, 28.0],
             "impulse_lookback": [8, 12, 18],
             "pullback_lookback": [3, 4, 6],

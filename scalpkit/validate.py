@@ -102,7 +102,13 @@ def full_validation(
     """To'liq tekshiruvni bajarib, xulosa qaytaradi."""
     price = float(df["close"].iloc[-1])
     feats = build_features(df)
-    atr = float(feats["atr"].iloc[-1])
+
+    # Xarajatni baholash uchun ATR **mediani** olinadi, oxirgi barniki emas.
+    # Oxirgi bar tasodifan sust bo'lsa (masalan ma'lumot tinch soatda
+    # tugasa), xarajat bir necha barobar oshib ko'rinadi va vosita noto'g'ri
+    # "spread juda keng" xulosasini chiqaradi.
+    atr_series = feats["atr"].dropna()
+    atr = float(atr_series.median()) if len(atr_series) else float("nan")
 
     # --- 1) xarajatni spreadga moslash ---
     if spread is not None:
@@ -114,7 +120,10 @@ def full_validation(
 
     p = cfg.strategy.params
     typical_stop = float(p.get("min_sl_atr", 1.0)) * atr * 1.4
-    cost_r = (cfg.cost.round_trip_bps() * 1e-4 * price) / typical_stop if typical_stop else np.inf
+    cost_r = (
+        (cfg.cost.round_trip_bps() * 1e-4 * price) / typical_stop
+        if typical_stop and np.isfinite(typical_stop) else np.inf
+    )
 
     # --- 2) to'liq backtest ---
     if verbose:
@@ -122,7 +131,20 @@ def full_validation(
     strat = get_strategy(cfg.strategy.name, cfg.strategy.params)
     res = run_backtest(feats, strat.generate(feats), cfg, strat.params,
                        warmup=warmup_bars(cfg.strategy.params))
-    full_metrics = compute_metrics(res.trades, res.equity, cfg.risk.initial_equity, res.days)
+    full_metrics = compute_metrics(res.trades, res.equity, cfg.risk.initial_equity,
+                                   res.days, days_per_year=cfg.days_per_year)
+
+    # Savdolar bo'lsa — HAQIQIY komissiya drenajidan foydalanamiz. Bu
+    # taxminiy ATR hisobidan aniqroq: u haqiqatda ochilgan pozitsiyalarning
+    # stop masofalarini hisobga oladi. Sirpanish `gross_pnl` ichida
+    # yashiringani uchun uni alohida, konfiguratsiyadan baholaymiz.
+    if not res.trades.empty and np.isfinite(full_metrics["fee_drag_r"]):
+        avg_stop = float((res.trades["risk_per_unit"]).mean())
+        slippage_r = (
+            (cfg.cost.slippage_bps + cfg.cost.stop_slippage_bps) * 1e-4 * price / avg_stop
+            if avg_stop > 0 else 0.0
+        )
+        cost_r = full_metrics["fee_drag_r"] + slippage_r
 
     # --- 3) walk-forward ---
     total_days = (df.index[-1] - df.index[0]).days
@@ -271,9 +293,12 @@ def format_report(rep: ValidationReport) -> str:
     if rep.significance:
         s = rep.significance
         L += ["", "-" * w, " STATISTIK ISHONCHLILIK".center(w, "-"), "-" * w,
-              f"  o'rtacha        : {s['observed_mean_r']:+.3f} R",
-              f"  95 % oralig'i   : [{s['ci_low']:+.3f}, {s['ci_high']:+.3f}] R",
-              f"  p-qiymat        : {s['p_value']:.4f}"]
+              f"  o'rtacha        : {s['observed_mean_r']:+.3f} R"]
+        if np.isfinite(s.get("ci_low", np.nan)):
+            L += [f"  95 % oralig'i   : [{s['ci_low']:+.3f}, {s['ci_high']:+.3f}] R",
+                  f"  p-qiymat        : {s['p_value']:.4f}"]
+        else:
+            L.append(f"  (savdolar juda kam — {s['n']:.0f} ta; statistika hisoblanmadi)")
 
     if rep.mc_summary is not None:
         L += ["", "  Monte Carlo (savdolar tartibi aralashtirilgan):", ""]

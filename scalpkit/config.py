@@ -60,6 +60,9 @@ class StrategyConfig:
 class Config:
     symbol: str = "BTCUSDT"
     timeframe: str = "5m"
+    # Yillik ko'rsatkichlar (CAGR, Sharpe) uchun savdo kunlari soni.
+    # Kripto 365, oltin/forex ~252. Profil buni avtomatik belgilaydi.
+    days_per_year: float = 365.0
     cost: CostConfig = field(default_factory=CostConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
     strategy: StrategyConfig = field(default_factory=StrategyConfig)

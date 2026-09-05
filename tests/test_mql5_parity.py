@@ -1,61 +1,57 @@
-"""MQL5 EA va Python strategiyasining mosligi.
+"""MQL5 EA fayllari va Python profillarining mosligi.
 
-Ikkita mustaqil amalga oshirish bor: `scalpkit` (Python, tadqiqot uchun) va
-`ScalpKit_M5.mq5` (MetaTrader 5, savdo uchun). Ular ajralib ketsa, backtest
-natijasi real savdoni tasvirlamay qo'yadi — ya'ni butun tekshiruv ishi
-qiymatini yo'qotadi.
+Uchta mustaqil artefakt bor:
+  * `scalpkit/profiles.py`            — kalibrlangan parametrlar
+  * `mql5/Include/ScalpKit/Core.mqh`  — umumiy savdo mantig'i
+  * `mql5/Experts/ScalpKit_*.mq5`     — instrumentga xos standart qiymatlar
 
-Bu testlar EA fayldagi `input` qiymatlarini Python sozlamalari bilan
-qatorma-qator solishtiradi.
+Ular ajralib ketsa, backtest natijasi real savdoni tasvirlamay qo'yadi —
+ya'ni butun tekshiruv ishi qiymatini yo'qotadi. EA fayllari
+`tools/gen_mql5_experts.py` bilan generatsiya qilinadi; bu testlar
+generatsiya natijasi joriy profillarga mos ekanini qulflaydi.
 """
 
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from scalpkit.config import Config
 from scalpkit.features import DEFAULT_FEATURE_PARAMS
+from scalpkit.profiles import BTCUSD, XAUUSD
 from scalpkit.strategies import get_strategy
 
-EA_PATH = Path(__file__).resolve().parents[1] / "mql5" / "Experts" / "ScalpKit_M5.mq5"
+ROOT = Path(__file__).resolve().parents[1]
+CORE = ROOT / "mql5" / "Include" / "ScalpKit" / "Core.mqh"
+EXPERTS = ROOT / "mql5" / "Experts"
 
-# EA input nomi -> (Python qiymati qayerdan olinadi, kalit)
+EA_FOR_PROFILE = {
+    "btcusd": (BTCUSD, EXPERTS / "ScalpKit_BTC_M5.mq5"),
+    "xauusd": (XAUUSD, EXPERTS / "ScalpKit_XAU_M5.mq5"),
+}
+
 STRATEGY_MAP = {
-    "InpMinAtrPct": "min_atr_pct",
-    "InpMaxAtrPct": "max_atr_pct",
-    "InpAdxMin": "adx_min",
-    "InpRequireHTF": "require_htf",
+    "InpMinAtrPct": "min_atr_pct", "InpMaxAtrPct": "max_atr_pct",
+    "InpAdxMin": "adx_min", "InpRequireHTF": "require_htf",
     "InpUseSession": "use_session_filter",
-    "InpSessionStartUTC": "session_start_hour",
-    "InpSessionEndUTC": "session_end_hour",
-    "InpImpulseLookback": "impulse_lookback",
-    "InpImpulseBodyAtr": "impulse_body_atr",
-    "InpImpulseVolZ": "impulse_vol_z",
-    "InpPullbackLookback": "pullback_lookback",
-    "InpTouchAtr": "touch_atr",
-    "InpRsiPullbackLong": "rsi_pullback_long",
-    "InpRsiPullbackShort": "rsi_pullback_short",
-    "InpTriggerVolZ": "trigger_vol_z",
-    "InpTriggerClosePos": "trigger_close_pos",
-    "InpMaxExtensionAtr": "max_extension_atr",
-    "InpEntryOffsetAtr": "entry_offset_atr",
-    "InpEntryLimitBars": "entry_limit_bars",
-    "InpSlBufferAtr": "sl_buffer_atr",
-    "InpMinSlAtr": "min_sl_atr",
-    "InpMaxSlAtr": "max_sl_atr",
-    "InpTp1R": "tp1_r",
-    "InpTp1Fraction": "tp1_fraction",
-    "InpTp2R": "tp2_r",
-    "InpTp1StopToR": "tp1_stop_to_r",
-    "InpBeTriggerR": "be_trigger_r",
-    "InpBeOffsetR": "be_offset_r",
-    "InpTrailAfterR": "trail_after_r",
-    "InpTrailAtrMult": "trail_atr_mult",
-    "InpTrailMinStepAtr": "trail_min_step_atr",
-    "InpTimeStopBars": "time_stop_bars",
-    "InpTimeStopMinR": "time_stop_min_r",
-    "InpExitOnEmaCross": "exit_on_ema_cross",
+    "InpSessionStartUTC": "session_start_hour", "InpSessionEndUTC": "session_end_hour",
+    "InpImpulseLookback": "impulse_lookback", "InpImpulseBodyAtr": "impulse_body_atr",
+    "InpImpulseVolZ": "impulse_vol_z", "InpPullbackLookback": "pullback_lookback",
+    "InpTouchAtr": "touch_atr", "InpRsiPullbackLong": "rsi_pullback_long",
+    "InpRsiPullbackShort": "rsi_pullback_short", "InpTriggerVolZ": "trigger_vol_z",
+    "InpTriggerClosePos": "trigger_close_pos", "InpMaxExtensionAtr": "max_extension_atr",
+    "InpEntryOffsetAtr": "entry_offset_atr", "InpEntryLimitBars": "entry_limit_bars",
+    "InpSlBufferAtr": "sl_buffer_atr", "InpMinSlAtr": "min_sl_atr",
+    "InpMaxSlAtr": "max_sl_atr", "InpTp1R": "tp1_r", "InpTp1Fraction": "tp1_fraction",
+    "InpTp2R": "tp2_r", "InpTp1StopToR": "tp1_stop_to_r", "InpBeTriggerR": "be_trigger_r",
+    "InpBeOffsetR": "be_offset_r", "InpTrailAfterR": "trail_after_r",
+    "InpTrailAtrMult": "trail_atr_mult", "InpTrailMinStepAtr": "trail_min_step_atr",
+    "InpTimeStopBars": "time_stop_bars", "InpTimeStopMinR": "time_stop_min_r",
+    "InpExitOnEmaCross": "exit_on_ema_cross", "InpWeekendFlat": "weekend_flat",
+    "InpWeekCloseHourUTC": "week_close_hour_utc", "InpWeekCloseDow": "week_close_dow",
+    "InpWeekOpenSkipBars": "week_open_skip_bars",
 }
 
 FEATURE_MAP = {
@@ -66,34 +62,26 @@ FEATURE_MAP = {
 }
 
 RISK_MAP = {
-    "InpRiskPerTrade": "risk_per_trade",
-    "InpMaxLeverage": "max_leverage",
-    "InpMaxTradesPerDay": "max_trades_per_day",
-    "InpDailyLossLimit": "daily_loss_limit",
+    "InpRiskPerTrade": "risk_per_trade", "InpMaxLeverage": "max_leverage",
+    "InpMaxTradesPerDay": "max_trades_per_day", "InpDailyLossLimit": "daily_loss_limit",
     "InpMaxConsecLosses": "max_consecutive_losses",
     "InpCooldownBars": "cooldown_bars_after_loss",
     "InpStreakCooldown": "cooldown_bars_after_streak",
     "InpHalveRiskDD": "halve_risk_drawdown",
-    "InpMinStopPct": "min_stop_pct",
-    "InpMaxStopPct": "max_stop_pct",
+    "InpMinStopPct": "min_stop_pct", "InpMaxStopPct": "max_stop_pct",
 }
 
 
-@pytest.fixture(scope="module")
-def ea_inputs() -> dict[str, object]:
-    assert EA_PATH.exists(), f"EA fayli topilmadi: {EA_PATH}"
-    src = EA_PATH.read_text(encoding="utf-8")
+def read_inputs(path: Path) -> dict[str, object]:
+    assert path.exists(), f"EA fayli topilmadi: {path}"
     out: dict[str, object] = {}
-    for m in re.finditer(r"^input\s+\w+\s+(\w+)\s*=\s*([^;]+);", src, re.M):
-        name, raw = m.group(1), m.group(2).strip()
-        if raw in ("true", "false"):
-            out[name] = (raw == "true")
-        else:
-            out[name] = float(raw)
+    for m in re.finditer(r"^input\s+\w+\s+(\w+)\s*=\s*([^;]+);", path.read_text("utf-8"), re.M):
+        raw = m.group(2).strip()
+        out[m.group(1)] = (raw == "true") if raw in ("true", "false") else float(raw)
     return out
 
 
-def _assert_same(ea_value, py_value, name: str) -> None:
+def same(ea_value, py_value, name: str) -> None:
     if isinstance(py_value, bool) or isinstance(ea_value, bool):
         assert bool(ea_value) == bool(py_value), f"{name}: EA={ea_value} Python={py_value}"
     else:
@@ -101,32 +89,44 @@ def _assert_same(ea_value, py_value, name: str) -> None:
             f"{name}: EA={ea_value} Python={py_value}"
 
 
-@pytest.mark.parametrize("ea_name,py_key", sorted(STRATEGY_MAP.items()))
-def test_strategy_parameters_match(ea_inputs, ea_name, py_key):
-    params = get_strategy("momentum_pullback").params
-    assert ea_name in ea_inputs, f"{ea_name} EA da topilmadi"
-    _assert_same(ea_inputs[ea_name], params[py_key], ea_name)
+@pytest.mark.parametrize("profile_name", sorted(EA_FOR_PROFILE))
+def test_strategy_parameters_match(profile_name):
+    profile, path = EA_FOR_PROFILE[profile_name]
+    inputs = read_inputs(path)
+    cfg = profile.apply(Config())
+    params = get_strategy(cfg.strategy.name, cfg.strategy.params).params
+    for ea_name, py_key in STRATEGY_MAP.items():
+        assert ea_name in inputs, f"{ea_name} {path.name} da yo'q"
+        same(inputs[ea_name], params[py_key], f"{profile_name}/{ea_name}")
 
 
-@pytest.mark.parametrize("ea_name,py_key", sorted(FEATURE_MAP.items()))
-def test_indicator_lengths_match(ea_inputs, ea_name, py_key):
-    assert ea_name in ea_inputs, f"{ea_name} EA da topilmadi"
-    _assert_same(ea_inputs[ea_name], DEFAULT_FEATURE_PARAMS[py_key], ea_name)
+@pytest.mark.parametrize("profile_name", sorted(EA_FOR_PROFILE))
+def test_risk_parameters_match(profile_name):
+    profile, path = EA_FOR_PROFILE[profile_name]
+    inputs = read_inputs(path)
+    risk = profile.apply(Config()).risk
+    for ea_name, py_key in RISK_MAP.items():
+        same(inputs[ea_name], getattr(risk, py_key), f"{profile_name}/{ea_name}")
 
 
-@pytest.mark.parametrize("ea_name,py_key", sorted(RISK_MAP.items()))
-def test_risk_parameters_match(ea_inputs, ea_name, py_key):
-    assert ea_name in ea_inputs, f"{ea_name} EA da topilmadi"
-    _assert_same(ea_inputs[ea_name], getattr(Config().risk, py_key), ea_name)
+@pytest.mark.parametrize("profile_name", sorted(EA_FOR_PROFILE))
+def test_indicator_lengths_match(profile_name):
+    _, path = EA_FOR_PROFILE[profile_name]
+    inputs = read_inputs(path)
+    for ea_name, py_key in FEATURE_MAP.items():
+        same(inputs[ea_name], DEFAULT_FEATURE_PARAMS[py_key], f"{profile_name}/{ea_name}")
 
 
-def test_limit_entry_is_the_default_in_both(ea_inputs):
-    params = get_strategy("momentum_pullback").params
-    assert ea_inputs["InpUseLimitEntry"] is True
-    assert params["entry_mode"] == "limit"
+@pytest.mark.parametrize("profile_name", sorted(EA_FOR_PROFILE))
+def test_limit_entry_matches_entry_mode(profile_name):
+    profile, path = EA_FOR_PROFILE[profile_name]
+    cfg = profile.apply(Config())
+    params = get_strategy(cfg.strategy.name, cfg.strategy.params).params
+    assert read_inputs(path)["InpUseLimitEntry"] is (params["entry_mode"] == "limit")
 
 
-def test_cost_guard_threshold_matches_python(ea_inputs):
+@pytest.mark.parametrize("profile_name", sorted(EA_FOR_PROFILE))
+def test_cost_guard_matches_python(profile_name):
     """EA va Python bir xil xarajat chegarasida savdoni rad etishi kerak."""
     import inspect
 
@@ -135,25 +135,85 @@ def test_cost_guard_threshold_matches_python(ea_inputs):
     source = inspect.getsource(trader.LiveTrader._open_trade)
     m = re.search(r"cost_r\s*>\s*([0-9.]+)", source)
     assert m, "trader.py da xarajat chegarasi topilmadi"
-    _assert_same(ea_inputs["InpMaxCostR"], float(m.group(1)), "InpMaxCostR")
+    same(read_inputs(EA_FOR_PROFILE[profile_name][1])["InpMaxCostR"],
+         float(m.group(1)), "InpMaxCostR")
 
 
-def test_ea_has_no_unbalanced_braces():
+def test_the_two_experts_use_different_magic_numbers():
+    """Bir terminalda ikkalasi ishlasa, savdolar aralashib ketmasligi kerak."""
+    btc = read_inputs(EA_FOR_PROFILE["btcusd"][1])["InpMagic"]
+    xau = read_inputs(EA_FOR_PROFILE["xauusd"][1])["InpMagic"]
+    assert btc != xau
+
+
+def test_gold_expert_enables_the_weekend_rule():
+    """Oltin dam olish kunlari yopiq — gap stopni chetlab o'tadi."""
+    gold = read_inputs(EA_FOR_PROFILE["xauusd"][1])
+    crypto = read_inputs(EA_FOR_PROFILE["btcusd"][1])
+    assert gold["InpWeekendFlat"] is True
+    assert crypto["InpWeekendFlat"] is False
+
+
+def test_gold_volatility_filter_is_far_below_the_crypto_one():
+    """Regressiya: BTC filtri oltinda barcha barlarni bloklaydi."""
+    gold = read_inputs(EA_FOR_PROFILE["xauusd"][1])
+    crypto = read_inputs(EA_FOR_PROFILE["btcusd"][1])
+    assert gold["InpMinAtrPct"] < crypto["InpMinAtrPct"] / 3.0
+    assert gold["InpMinStopPct"] < crypto["InpMinStopPct"] / 3.0
+
+
+# ------------------------------------------------------------ tuzilma
+def test_generated_experts_are_up_to_date():
+    """EA fayllari joriy profillardan generatsiya qilinganmi."""
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "gen_mql5_experts.py"), "--check"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_core_config_struct_covers_every_field_used():
+    """`g_cfg.X` ishlatilsa, u strukturada e'lon qilingan bo'lishi shart."""
+    core = CORE.read_text("utf-8")
+    block = re.search(r"struct ScalpKitConfig\s*\{(.*?)\n\};", core, re.S)
+    assert block, "ScalpKitConfig strukturasi topilmadi"
+    declared = set(re.findall(r"^\s*(?:double|int|bool|long|string)\s+(\w+);",
+                              block.group(1), re.M))
+    used = set(re.findall(r"\bg_cfg\.(\w+)\b", core))
+    assert not (used - declared), f"e'lon qilinmagan maydonlar: {sorted(used - declared)}"
+    assert not (declared - used), f"ishlatilmagan maydonlar: {sorted(declared - used)}"
+
+
+@pytest.mark.parametrize("profile_name", sorted(EA_FOR_PROFILE))
+def test_every_config_field_is_passed_by_the_expert(profile_name):
+    core = CORE.read_text("utf-8")
+    block = re.search(r"struct ScalpKitConfig\s*\{(.*?)\n\};", core, re.S)
+    declared = set(re.findall(r"^\s*(?:double|int|bool|long|string)\s+(\w+);",
+                              block.group(1), re.M))
+    src = EA_FOR_PROFILE[profile_name][1].read_text("utf-8")
+    assigned = set(re.findall(r"g_cfg\.(\w+)\s*=", src))
+    assert declared == assigned, (
+        f"uzatilmagan: {sorted(declared - assigned)}; "
+        f"ortiqcha: {sorted(assigned - declared)}"
+    )
+
+
+@pytest.mark.parametrize("path", [CORE, *[p for _, p in EA_FOR_PROFILE.values()]],
+                         ids=lambda p: p.name)
+def test_mql_files_have_balanced_delimiters(path):
     """Kompilyatorsiz eng oddiy, lekin foydali tekshiruv."""
-    src = EA_PATH.read_text(encoding="utf-8")
-    clean, state = _strip_comments_and_strings(src)
+    clean, state = _strip(path.read_text("utf-8"))
     assert state == "code", "yopilmagan satr yoki kommentariy bor"
     for opener, closer in (("{", "}"), ("(", ")"), ("[", "]")):
         assert clean.count(opener) == clean.count(closer), \
             f"'{opener}{closer}' qavslar muvozanatda emas"
 
 
-def _strip_comments_and_strings(src: str) -> tuple[str, str]:
+def _strip(src: str) -> tuple[str, str]:
     out: list[str] = []
     i, n, state = 0, len(src), "code"
     while i < n:
-        c = src[i]
-        nxt = src[i + 1] if i + 1 < n else ""
+        c, nxt = src[i], (src[i + 1] if i + 1 < n else "")
         if state == "code":
             if c == "/" and nxt == "/":
                 state = "line"; i += 2; continue

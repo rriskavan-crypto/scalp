@@ -31,8 +31,13 @@ class Strategy:
         raise NotImplementedError
 
     @classmethod
-    def param_space(cls) -> dict[str, list[Any]]:
-        """Optimizatsiya uchun qidiruv fazosi."""
+    def param_space(cls, base: dict[str, Any] | None = None) -> dict[str, list[Any]]:
+        """Optimizatsiya uchun qidiruv fazosi.
+
+        `base` — joriy sozlama. Volatilitetga bog'liq chegaralar unga
+        nisbatan qurilishi kerak, aks holda faza boshqa instrumentda
+        yaroqsiz bo'lib qoladi.
+        """
         return {}
 
     def describe(self) -> str:
@@ -53,3 +58,29 @@ def session_mask(f: pd.DataFrame, start_hour: int, end_hour: int) -> pd.Series:
 def rolling_any(cond: pd.Series, window: int) -> pd.Series:
     """Oxirgi `window` bar ichida shart kamida bir marta bajarilganmi."""
     return cond.astype(float).rolling(window, min_periods=1).max() > 0
+
+
+def week_guard_mask(index: pd.DatetimeIndex, close_dow: int, close_hour: int,
+                    open_skip_bars: int) -> pd.Series:
+    """Hafta chegarasida savdo qilinmaydigan oynani belgilaydi.
+
+    Ikki xavfni qoplaydi:
+      1. **Hafta oxiri gapi** — juma kechqurun ochilgan pozitsiya dushanba
+         narx sakragan holda ochiladi, stop ishlamaydi;
+      2. **Ochilish spreadi** — yakshanba/dushanba ochilishida spread
+         bir necha barobar keng bo'ladi.
+
+    True = savdo qilish mumkin.
+    """
+    dow = pd.Series(index.dayofweek, index=index)
+    hour = pd.Series(index.hour, index=index)
+
+    ok = ~((dow == close_dow) & (hour >= close_hour))
+
+    if open_skip_bars > 0:
+        # Har bir savdo haftasining birinchi `open_skip_bars` bari o'tkaziladi
+        week = pd.Series(index.isocalendar().week.to_numpy(), index=index)
+        year = pd.Series(index.isocalendar().year.to_numpy(), index=index)
+        bar_in_week = pd.Series(1, index=index).groupby([year, week]).cumsum()
+        ok &= (bar_in_week > open_skip_bars)
+    return ok

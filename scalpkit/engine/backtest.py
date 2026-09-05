@@ -114,6 +114,7 @@ def run_backtest(
     time_stop_min_r = float(p.get("time_stop_min_r", 0.5))
     exit_on_ema = bool(p.get("exit_on_ema_cross", True))
     entry_mode = str(p.get("entry_mode", "limit"))
+    weekend_flat = bool(p.get("weekend_flat", False))
     entry_limit_bars = int(p.get("entry_limit_bars", 3))
 
     # --- numpy massivlariga o'tkazamiz (tezlik uchun) ---
@@ -131,6 +132,17 @@ def run_backtest(
         if "entry_ref" in signals.columns
         else np.full(len(idx), np.nan)
     )
+
+    # Hafta chegarasida pozitsiyani majburan yopish (oltin/forex uchun).
+    # Hafta oxiri gapi stopni chetlab o'tishi mumkin, shuning uchun
+    # pozitsiya juma kechqurun yopiladi.
+    if weekend_flat:
+        force_flat = (
+            (idx.dayofweek == int(p.get("week_close_dow", 4)))
+            & (idx.hour >= int(p.get("week_close_hour_utc", 19)))
+        )
+    else:
+        force_flat = np.zeros(len(idx), dtype=bool)
 
     n = len(idx)
     equity = float(risk_cfg.initial_equity)
@@ -154,7 +166,7 @@ def run_backtest(
                 pos, i, op, hi, lo, cl, ema_fast, cost,
                 tp1_r, tp1_fraction, tp2_r, tp1_stop_to_r, be_after_tp1,
                 be_trigger_r, be_offset_r, trail_mult, trail_after_r,
-                time_stop, time_stop_min_r, exit_on_ema,
+                time_stop, time_stop_min_r, exit_on_ema, bool(force_flat[i]),
             )
             if closed_this_bar:
                 trade = _finalize(pos, bar_time, i, cost, equity)
@@ -165,7 +177,14 @@ def run_backtest(
                 pos = None
 
         # ================= 2) YANGI POZITSIYA OCHISH =================
-        if pos is None and not closed_this_bar:
+        # Hafta chegarasi butun kirish blokini yopadi. Bu KIRISH nuqtasida
+        # tekshirilishi shart, signal nuqtasida emas: signal juma 18:55 da
+        # ruxsat etilgan bo'lishi mumkin, lekin limit order 19:00 dan keyin
+        # to'ldirilsa, pozitsiya hafta oxiriga qolib ketadi.
+        if force_flat[i] and pending is not None:
+            pending, limit_expired = None, limit_expired + 1
+
+        if pos is None and not closed_this_bar and not force_flat[i]:
             # 2a) Kutayotgan limit orderni tekshiramiz
             if pending is not None:
                 if i > pending.expiry_bar:
@@ -349,7 +368,8 @@ def _close_all(pos: _Position, price: float, reason: str, cost, is_stop: bool) -
 def _manage_position(pos, i, op, hi, lo, cl, ema_fast, cost,
                      tp1_r, tp1_fraction, tp2_r, tp1_stop_to_r, be_after_tp1,
                      be_trigger_r, be_offset_r, trail_mult, trail_after_r,
-                     time_stop, time_stop_min_r, exit_on_ema) -> bool:
+                     time_stop, time_stop_min_r, exit_on_ema,
+                     force_flat) -> bool:
     """Bitta bar davomida ochiq pozitsiyani boshqaradi. True = pozitsiya yopildi.
 
     Chiqish tuzilmasi qasddan shunday qurilgan: **yutuqlar cheklanmaydi**.
@@ -417,6 +437,13 @@ def _manage_position(pos, i, op, hi, lo, cl, ema_fast, cost,
     # --- 6) Trailing stop (keyingi barga ta'sir qiladi) ---
     if move_r >= trail_after_r:
         _raise_stop(pos, pos.best_price - s * trail_mult * pos.atr0)
+
+    # --- 6b) Hafta chegarasi: pozitsiyasiz qolish ---
+    # Stop va TP dan KEYIN tekshiriladi — agar bar ichida ular ishlagan
+    # bo'lsa, savdo o'sha darajada yopilgan hisoblanadi.
+    if force_flat:
+        _close_all(pos, c, "weekend_flat", cost, is_stop=False)
+        return True
 
     # --- 7) Vaqt stopi: faqat hech qayoqqa ketmagan savdolar ---
     if i - pos.entry_i >= time_stop and move_r < time_stop_min_r:

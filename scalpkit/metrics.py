@@ -9,12 +9,20 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-TRADING_DAYS_PER_YEAR = 365.0  # kripto 24/7 savdo qiladi
+# Standart: kripto 24/7 savdo qiladi. Oltin/forex uchun ~252 kun —
+# `compute_metrics(..., days_per_year=252)` bilan uzatiladi. Noto'g'ri
+# qiymat CAGR va Sharpe ni sezilarli buzadi.
+TRADING_DAYS_PER_YEAR = 365.0
 
 
 def compute_metrics(trades: pd.DataFrame, equity: pd.Series,
-                    initial_equity: float, days: float) -> dict[str, float]:
-    """Savdolar va ekviti egri chizig'idan to'liq statistika."""
+                    initial_equity: float, days: float,
+                    days_per_year: float = TRADING_DAYS_PER_YEAR) -> dict[str, float]:
+    """Savdolar va ekviti egri chizig'idan to'liq statistika.
+
+    `days_per_year` — yillik ko'rsatkichlarni hisoblash uchun savdo
+    kunlari soni: kripto 365, oltin/forex ~252.
+    """
     m: dict[str, float] = {}
     n = len(trades)
     m["trades"] = float(n)
@@ -68,7 +76,7 @@ def compute_metrics(trades: pd.DataFrame, equity: pd.Series,
     m["max_drawdown_pct"] = float(dd.min()) if len(dd) else 0.0
     m["max_drawdown_days"] = _max_drawdown_duration_days(eq)
 
-    years = days / TRADING_DAYS_PER_YEAR
+    years = days / days_per_year
     if years > 0 and m["final_equity"] > 0:
         m["cagr"] = (m["final_equity"] / initial_equity) ** (1.0 / years) - 1.0
     else:
@@ -78,10 +86,10 @@ def compute_metrics(trades: pd.DataFrame, equity: pd.Series,
     daily = eq.resample("1D").last().dropna()
     dret = daily.pct_change().dropna()
     if len(dret) > 2 and dret.std(ddof=1) > 0:
-        m["sharpe"] = float(dret.mean() / dret.std(ddof=1) * np.sqrt(TRADING_DAYS_PER_YEAR))
+        m["sharpe"] = float(dret.mean() / dret.std(ddof=1) * np.sqrt(days_per_year))
         downside = dret[dret < 0]
         ds = downside.std(ddof=1) if len(downside) > 1 else 0.0
-        m["sortino"] = float(dret.mean() / ds * np.sqrt(TRADING_DAYS_PER_YEAR)) if ds > 0 else np.inf
+        m["sortino"] = float(dret.mean() / ds * np.sqrt(days_per_year)) if ds > 0 else np.inf
     else:
         m["sharpe"] = 0.0
         m["sortino"] = 0.0

@@ -62,8 +62,8 @@ def walk_forward(
     verbose: bool = True,
 ) -> WalkForwardResult:
     """Bosqichma-bosqich optimizatsiya va ko'rilmagan ma'lumotda test."""
-    strat_cls = get_strategy(strategy_name).__class__
-    space = space or strat_cls.param_space()
+    base_strategy = get_strategy(strategy_name, cfg.strategy.params)
+    space = space or base_strategy.param_space(base_strategy.params)
     space_keys = list(space)
     obj_fn = OBJECTIVES[objective]
 
@@ -132,7 +132,8 @@ def walk_forward(
             oos_trade_frames.append(oos_trades)
 
         m_oos = compute_metrics(oos_trades, oos_eq, cfg.risk.initial_equity,
-                                max((test_end - test_start).days, 1))
+                                max((test_end - test_start).days, 1),
+                                days_per_year=cfg.days_per_year)
         fold_rows.append({
             "fold": k + 1,
             "train_start": train_start, "test_start": test_start, "test_end": test_end,
@@ -170,9 +171,11 @@ def walk_forward(
         oos_trades=oos_trades_all,
         oos_equity=oos_equity,
         oos_metrics=compute_metrics(oos_trades_all, oos_equity,
-                                    cfg.risk.initial_equity, oos_days),
+                                    cfg.risk.initial_equity, oos_days,
+                                    days_per_year=cfg.days_per_year),
         is_metrics=compute_metrics(is_trades_all, oos_equity,
-                                   cfg.risk.initial_equity, max(train_days, 1)),
+                                   cfg.risk.initial_equity, max(train_days, 1),
+                                   days_per_year=cfg.days_per_year),
     )
 
 
