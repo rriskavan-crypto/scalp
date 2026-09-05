@@ -1,0 +1,95 @@
+# ============================================================================
+#  scalpkit — asosiy konfiguratsiya
+#  BTC/USDT M5 "Momentum Pullback" tanlab-skalping strategiyasi
+# ============================================================================
+
+symbol: BTCUSDT
+timeframe: 5m
+
+# ---------------------------------------------------------------------------
+# XARAJATLAR — natijani hal qiladigan eng muhim blok.
+# Binance USDⓈ-M futures, VIP0: taker 0.05 % (5 bps), maker 0.02 % (2 bps).
+# O'z tarifingizni kiriting — noto'g'ri qiymat butun backtestni yolg'on qiladi.
+# ---------------------------------------------------------------------------
+cost:
+  taker_fee_bps: 5.0
+  maker_fee_bps: 2.0
+  entry_is_maker: false      # entry_mode: limit bo'lsa dvigatel avtomatik maker deb hisoblaydi
+  exit_is_maker: false
+  slippage_bps: 1.5          # bozor buyrug'idagi o'rtacha sirpanish
+  stop_slippage_bps: 3.0     # stop ishlaganda kattaroq sirpanish
+  funding_rate_8h: 0.0001
+  apply_funding: true
+
+# ---------------------------------------------------------------------------
+# RISK — ustunlikdan ham muhimroq. Bu raqamlarni oshirmang.
+# ---------------------------------------------------------------------------
+risk:
+  initial_equity: 10000.0
+  risk_per_trade: 0.005        # 0.5 % — tavsiya etilgan maksimum
+  max_leverage: 5.0
+  max_trades_per_day: 8
+  daily_loss_limit: 0.03       # kunlik -3 % da savdo to'xtaydi
+  max_consecutive_losses: 3
+  cooldown_bars_after_loss: 6      # 30 daqiqa
+  cooldown_bars_after_streak: 24   # 2 soat
+  halve_risk_drawdown: 0.08
+  min_stop_pct: 0.0015
+  max_stop_pct: 0.020
+
+# ---------------------------------------------------------------------------
+# STRATEGIYA
+# ---------------------------------------------------------------------------
+strategy:
+  name: momentum_pullback
+  params:
+    # --- rejim filtrlari: qachon UMUMAN savdo qilish mumkin ---
+    min_atr_pct: 0.0020        # ATR14 narxning kamida 0.20 % i bo'lsin
+    max_atr_pct: 0.0120        # 1.2 % dan yuqorida — xaos, savdo yo'q
+    adx_min: 20.0
+    require_htf: true          # H1 yo'nalishiga qarshi savdo qilmaslik
+    use_session_filter: true
+    session_start_hour: 6      # UTC — London ochilishidan
+    session_end_hour: 22       # UTC — NY yopilishigacha
+
+    # --- setup: impuls + orqaga qaytish ---
+    impulse_lookback: 12
+    impulse_body_atr: 0.8
+    impulse_vol_z: 1.0
+    pullback_lookback: 4
+    touch_atr: 0.25
+    rsi_pullback_long: 45.0
+    rsi_pullback_short: 55.0
+
+    # --- trigger ---
+    trigger_vol_z: -0.2
+    trigger_close_pos: 0.5
+    max_extension_atr: 1.0     # kech qolib quvmaslik
+
+    # --- kirish usuli ---
+    entry_mode: limit          # limit | market
+    entry_offset_atr: 0.15
+    entry_limit_bars: 3
+
+    # --- stop ---
+    sl_buffer_atr: 0.25
+    min_sl_atr: 1.0
+    max_sl_atr: 2.2
+
+    # --- chiqish: yutuqlar CHEKLANMAYDI ---
+    tp1_r: 1.5
+    tp1_fraction: 0.35         # atigi 35 % — qolgani ishlashda davom etadi
+    tp2_r: 3.5
+    tp1_stop_to_r: -0.35       # TP1 dan keyin stop -0.35R ga (zararsizlikka EMAS)
+    be_after_tp1: false        # true -> klassik "darhol zararsizlikka" usuli
+                               #         (payoff'ni buzadi, taqqoslash uchun qoldirilgan)
+    be_trigger_r: 2.0          # zararsizlikka faqat +2R dan keyin
+    be_offset_r: 0.05
+    trail_after_r: 1.5
+    trail_atr_mult: 2.5
+    time_stop_bars: 24         # 2 soat
+    time_stop_min_r: 0.5       # faqat hech qayoqqa ketmagan savdolarni yopadi
+    exit_on_ema_cross: true
+
+    allow_long: true
+    allow_short: true
