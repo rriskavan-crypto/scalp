@@ -87,6 +87,7 @@ strategy:
     be_offset_r: 0.05
     trail_after_r: 1.5
     trail_atr_mult: 2.5
+    trail_min_step_atr: 0.15   # jonli savdo: stopni shundan kichik qadamda surmaydi
     time_stop_bars: 24         # 2 soat
     time_stop_min_r: 0.5       # faqat hech qayoqqa ketmagan savdolarni yopadi
     exit_on_ema_cross: true

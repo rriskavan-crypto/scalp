@@ -92,6 +92,7 @@ class MomentumPullback(Strategy):
         "be_offset_r": 0.05,
         "trail_atr_mult": 2.5,
         "trail_after_r": 1.5,
+        "trail_min_step_atr": 0.15,   # jonli savdoda stopni mayda-mayda surmaslik
         "time_stop_bars": 24,
         "time_stop_min_r": 0.5,
         "exit_on_ema_cross": True,

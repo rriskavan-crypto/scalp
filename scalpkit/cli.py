@@ -11,6 +11,11 @@ Buyruqlar:
     walkforward  Ko'rilmagan ma'lumotda tekshirish — asosiy validatsiya
     montecarlo   Natijaning statistik ishonchliligi va drawdown taqsimoti
     signal       Oxirgi bar bo'yicha jonli signal va darajalar
+
+MetaTrader 5 (Exness va boshqalar) — FAQAT Windows:
+    mt5-test     Terminalga ulanish, hisob, spread va joriy signalni tekshirish
+    mt5-bars     MT5 dan tarixiy barlarni CSV ga yuklash
+    trade        Jonli savdo sikli (standart holatda DRY-RUN)
 """
 
 from __future__ import annotations
@@ -192,6 +197,145 @@ def cmd_signal(args) -> None:
     print("\n" + format_signal(ls, cfg, cfg.risk.initial_equity))
 
 
+# ---------------------------------------------------------------- MT5 buyruqlari
+def _mt5_broker(args, dry_run: bool):
+    from .broker.mt5broker import MT5Broker, MT5Credentials
+    creds = MT5Credentials.from_env(login=args.login, server=args.server, path=args.path)
+    broker = MT5Broker(creds, dry_run=dry_run)
+    broker.connect()
+    return broker
+
+
+def cmd_mt5_test(args) -> None:
+    from .costs import mt5_cost_in_r, mt5_spread_report, verdict_for_cost_r
+    from .live import evaluate_now, format_signal
+
+    cfg = _config(args)
+    w = 66
+    print("=" * w)
+    print("MT5 ULANISH VA SIGNAL TEKSHIRUVI".center(w))
+    print("=" * w)
+
+    broker = _mt5_broker(args, dry_run=True)
+    try:
+        # --- hisob ---
+        acc = broker.account()
+        print(f"\n[1] HISOB")
+        print(f"    login        : {acc.login}")
+        print(f"    balans       : {acc.balance:,.2f} {acc.currency}")
+        print(f"    ekviti       : {acc.equity:,.2f} {acc.currency}")
+        print(f"    bo'sh marja  : {acc.margin_free:,.2f}")
+        print(f"    leverage     : 1:{acc.leverage}")
+        print(f"    savdo ruxsati: {'HA' if acc.trade_allowed else 'YO`Q'}")
+        if not acc.trade_allowed:
+            print("    >>> Terminal: Tools > Options > Expert Advisors >")
+            print("        'Allow algorithmic trading' ni yoqing.")
+        print(f"    server vaqti : UTC{broker.server_utc_offset_hours:+.0f}")
+
+        # --- instrument ---
+        symbol = broker.resolve_symbol(args.symbol or cfg.symbol)
+        spec = broker.symbol_spec(symbol)
+        print(f"\n[2] INSTRUMENT: {symbol}")
+        print(f"    lot hajmi    : {spec.contract_size}")
+        print(f"    min / qadam  : {spec.volume_min} / {spec.volume_step}")
+        print(f"    digits/point : {spec.digits} / {spec.point}")
+        print(f"    stops level  : {spec.stops_level_points} punkt "
+              f"({spec.min_stop_distance():.2f} narx birligi)")
+
+        # --- spread ---
+        q = broker.quote(symbol)
+        bars = broker.bars(symbol, cfg.timeframe, count=1200)
+        from .features import build_features
+        f = build_features(bars)
+        atr = float(f["atr"].iloc[-1])
+        p = cfg.strategy.params
+        stop_dist = float(p.get("min_sl_atr", 1.0)) * atr * 1.4
+        cost_r = mt5_cost_in_r(q.spread, stop_dist,
+                               commission_per_lot=args.commission,
+                               contract_size=spec.contract_size)
+        print(f"\n[3] SPREAD VA XARAJAT")
+        print(f"    bid / ask    : {q.bid:.2f} / {q.ask:.2f}")
+        print(f"    spread       : {q.spread:.2f}  ({q.spread / q.mid * 100:.4f} %)")
+        print(f"    ATR(14) M5   : {atr:.2f}  ({atr / q.mid * 100:.3f} % narxdan)")
+        print(f"    xarajat      : {cost_r:.3f} R")
+        print(f"    >>> {verdict_for_cost_r(cost_r)}")
+        print()
+        print(mt5_spread_report(q.spread, q.mid, atr,
+                                commission_per_lot=args.commission,
+                                contract_size=spec.contract_size).round(3).to_string())
+
+        # --- barlar ---
+        print(f"\n[4] BARLAR")
+        print(f"    yuklandi     : {len(bars):,} ta (yopilgan)")
+        print(f"    oxirgi bar   : {bars.index[-1]:%Y-%m-%d %H:%M} UTC")
+        print(f"    narx         : {bars['close'].iloc[-1]:,.2f}")
+
+        # --- signal ---
+        print(f"\n[5] JORIY SIGNAL")
+        cfg.symbol = symbol
+        ls = evaluate_now(bars, cfg, equity=acc.equity)
+        print(format_signal(ls, cfg, acc.equity))
+
+        # --- hajm ---
+        if ls.has_signal:
+            units = (acc.equity * cfg.risk.risk_per_trade) / (ls.stop_pct * ls.entry)
+            lots = spec.normalize_volume(units / spec.contract_size)
+            print(f"\n[6] HAJM HISOBI")
+            print(f"    lot          : {lots}")
+            print(f"    real risk    : {lots * spec.contract_size * ls.stop_pct * ls.entry:,.2f} "
+                  f"{acc.currency}")
+            if lots <= 0:
+                print("    >>> Hisoblangan hajm minimal lotdan kichik — savdo qilinmaydi.")
+        print("\n" + "=" * w)
+        print("Tekshiruv tugadi. Hech qanday order YUBORILMADI.".center(w))
+        print("=" * w)
+    finally:
+        broker.disconnect()
+
+
+def cmd_mt5_bars(args) -> None:
+    cfg = _config(args)
+    broker = _mt5_broker(args, dry_run=True)
+    try:
+        symbol = broker.resolve_symbol(args.symbol or cfg.symbol)
+        df = broker.bars(symbol, args.interval, count=args.count)
+        save_csv(df, args.out)
+        print(f"  {len(df):,} bar saqlandi -> {args.out}")
+        print(f"  {df.index[0]:%Y-%m-%d %H:%M} - {df.index[-1]:%Y-%m-%d %H:%M} UTC")
+        print(f"  Endi shu ma'lumotda backtest qiling:")
+        print(f"    python -m scalpkit backtest --data {args.out}")
+    finally:
+        broker.disconnect()
+
+
+def cmd_trade(args) -> None:
+    from .trader import LiveTrader
+
+    cfg = _config(args)
+    dry_run = not args.live
+    if not dry_run:
+        print("\n" + "!" * 66)
+        print("  DIQQAT: REAL SAVDO REJIMI — haqiqiy orderlar yuboriladi.")
+        print(f"  Hisob: {args.login or 'MT5_LOGIN'}   Instrument: {args.symbol or cfg.symbol}")
+        print(f"  Risk: {cfg.risk.risk_per_trade * 100:.2f} % / savdo")
+        print("!" * 66)
+        if input("\n  Davom etish uchun 'HA' deb yozing: ").strip() != "HA":
+            print("  Bekor qilindi.")
+            return
+
+    broker = _mt5_broker(args, dry_run=dry_run)
+    try:
+        symbol = broker.resolve_symbol(args.symbol or cfg.symbol)
+        trader = LiveTrader(broker, cfg, symbol, dry_run=dry_run,
+                            state_path=args.state)
+        if args.once:
+            trader.run_once()
+        else:
+            trader.run_forever(poll_seconds=args.poll)
+    finally:
+        broker.disconnect()
+
+
 # ---------------------------------------------------------------- parser
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -276,6 +420,38 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--days", type=int, default=10, help="--live uchun necha kunlik tarix")
     s.add_argument("--market", default="futures", choices=["futures", "spot"])
     s.set_defaults(func=cmd_signal)
+
+    # ------------------------------ MT5 (faqat Windows) ------------------------------
+    def mt5_args(sp):
+        sp.add_argument("--login", type=int, help="MT5 login (yoki MT5_LOGIN)")
+        sp.add_argument("--server", help="MT5 server (yoki MT5_SERVER)")
+        sp.add_argument("--path", help="terminal64.exe yo'li (yoki MT5_PATH)")
+        sp.add_argument("--symbol", help="Instrument nomi (masalan BTCUSD)")
+
+    s = sub.add_parser("mt5-test", help="MT5 ulanish, spread va signal tekshiruvi")
+    common(s, data=False)
+    mt5_args(s)
+    s.add_argument("--commission", type=float, default=0.0,
+                   help="Bir lot uchun komissiya (Raw/Zero hisoblarda)")
+    s.set_defaults(func=cmd_mt5_test)
+
+    s = sub.add_parser("mt5-bars", help="MT5 dan barlarni CSV ga yuklash")
+    common(s, data=False)
+    mt5_args(s)
+    s.add_argument("--interval", default="5m")
+    s.add_argument("--count", type=int, default=50_000)
+    s.add_argument("--out", default="data/MT5_BTCUSD_5m.csv")
+    s.set_defaults(func=cmd_mt5_bars)
+
+    s = sub.add_parser("trade", help="Jonli savdo sikli (standart: DRY-RUN)")
+    common(s, data=False)
+    mt5_args(s)
+    s.add_argument("--live", action="store_true",
+                   help="HAQIQIY orderlar yuborish (tasdiqlash so'raladi)")
+    s.add_argument("--once", action="store_true", help="Bir marta ishlab to'xtash")
+    s.add_argument("--poll", type=int, default=20, help="Tekshirish oralig'i, soniya")
+    s.add_argument("--state", default="state/live_state.json")
+    s.set_defaults(func=cmd_trade)
     return p
 
 

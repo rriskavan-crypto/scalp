@@ -108,3 +108,69 @@ def edge_needed_report(cost: CostConfig, trades_per_day: float = 3.0) -> pd.Data
             "foyda @1.0% risk": per_year * 0.010 * 100.0,
         })
     return pd.DataFrame(rows).set_index("ustunlik (R/savdo)")
+
+
+# ---------------------------------------------------------------------------
+# MT5 / Exness uchun xarajat modeli
+# ---------------------------------------------------------------------------
+# MUHIM FARQ: Binance futures'da xarajat asosan **komissiya**dan iborat.
+# Exness kabi MT5 brokerlarida standart hisobda komissiya odatda yo'q —
+# butun xarajat **spread**ga singdirilgan. Shuning uchun bu yerda boshqa
+# formula ishlatiladi:
+#
+#     bir tomonlama xarajat = spread (siz ask'da olib, bid'da sotasiz)
+#     to'liq savdo          = 2 x spread + komissiya (agar bor bo'lsa)
+#
+# BTCUSD spreadi Exness'da hisob turiga qarab keskin farq qiladi va
+# volatillikda kengayadi. Shuning uchun uni **jonli o'lchash** kerak.
+
+def mt5_round_trip_cost(spread: float, commission_per_lot: float = 0.0,
+                        contract_size: float = 1.0, price: float = 1.0,
+                        extra_slippage: float = 0.0) -> float:
+    """MT5 da bitta to'liq savdoning narxi (narx birligida, 1 birlik uchun).
+
+    spread              — joriy ask - bid
+    commission_per_lot  — hisobga qarab (Raw/Zero hisoblarda bor)
+    """
+    commission_per_unit = (
+        commission_per_lot / contract_size if contract_size > 0 else 0.0
+    )
+    return 2.0 * spread + 2.0 * commission_per_unit + extra_slippage
+
+
+def mt5_cost_in_r(spread: float, stop_distance: float, **kwargs) -> float:
+    """MT5 xarajati R birligida — savdo qilish arziydimi yoki yo'qmi shu hal qiladi."""
+    if stop_distance <= 0:
+        return float("inf")
+    return mt5_round_trip_cost(spread, **kwargs) / stop_distance
+
+
+def mt5_spread_report(spread: float, price: float, atr: float,
+                      sl_atr_mult: float = 1.6,
+                      commission_per_lot: float = 0.0,
+                      contract_size: float = 1.0) -> pd.DataFrame:
+    """Joriy spread bilan turli stop masofalarida xarajat jadvali."""
+    rows = []
+    for mult in (1.0, 1.3, 1.6, 2.0, 2.5):
+        dist = mult * atr
+        cost_r = mt5_cost_in_r(spread, dist, commission_per_lot=commission_per_lot,
+                               contract_size=contract_size)
+        rows.append({
+            "stop (ATR)": mult,
+            "stop (narx)": dist,
+            "stop (% narxdan)": dist / price * 100.0 if price else float("nan"),
+            "xarajat (R)": cost_r,
+            "zararsizlik @2R": breakeven_win_rate(2.0, cost_r) * 100.0,
+        })
+    return pd.DataFrame(rows).set_index("stop (ATR)")
+
+
+def verdict_for_cost_r(cost_r: float) -> str:
+    """Xarajat darajasiga qarab qisqa xulosa."""
+    if cost_r <= 0.20:
+        return "YAXSHI — bu spread bilan savdo qilish mumkin"
+    if cost_r <= 0.30:
+        return "QABUL QILARLI — ustunlik ingichka bo'lsa yo'qoladi"
+    if cost_r <= 0.40:
+        return "CHEGARADA — faqat kuchli signallarda"
+    return "JUDA QIMMAT — bu spread bilan savdo qilmang"

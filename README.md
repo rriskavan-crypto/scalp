@@ -94,6 +94,54 @@ python -m scalpkit backtest --data data/SYNTH_5m.csv
 
 ---
 
+## MetaTrader 5 (Exness) — jonli savdo
+
+Repoda MT5 uchun to'liq ijro qatlami bor: order yuborish, SL/TP boshqarish,
+qisman yopish, trailing va risk nazorati.
+
+> **FAQAT Windows.** `MetaTrader5` Python paketi Linux/macOS uchun mavjud
+> emas — u tarmoq orqali emas, **shu kompyuterdagi** ochiq MT5 terminaliga
+> ulanadi. Bu MetaQuotes cheklovi.
+
+```bat
+pip install MetaTrader5
+
+set MT5_LOGIN=00000000
+set MT5_SERVER=Exness-MT5Trial00
+set MT5_PASSWORD=***
+
+:: 1) Ulanish, spread va joriy signalni tekshirish (order yubormaydi)
+python -m scalpkit mt5-test --symbol BTCUSD
+
+:: 2) Brokeringizning o'z ma'lumotida backtest
+python -m scalpkit mt5-bars --symbol BTCUSD --count 100000 --out data/EXNESS_BTCUSD_5m.csv
+python -m scalpkit backtest --data data/EXNESS_BTCUSD_5m.csv
+
+:: 3) DRY-RUN — order yuborilmaydi, faqat ko'rsatiladi
+python -m scalpkit trade --symbol BTCUSD
+
+:: 4) REAL savdo (tasdiqlash so'raladi)
+python -m scalpkit trade --symbol BTCUSD --live --risk 0.001
+```
+
+### MT5 da xarajat boshqacha hisoblanadi
+
+Binance'da xarajat **komissiya**, Exness'da esa **spread**. Kod buni
+jonli o'lchaydi va xarajat `0.40R` dan oshsa savdoni **avtomatik rad etadi**:
+
+| Spread (BTC ~60 000) | Xarajat (stop 1.6 ATR) | Xulosa |
+|---|---|---|
+| $15 | 0.12 R | yaxshi |
+| $30 | 0.25 R | qabul qilarli |
+| $60 | 0.50 R | savdo qilinmaydi |
+
+To'liq qo'llanma: **[docs/MT5_UZ.md](docs/MT5_UZ.md)**
+
+> Parolni hech qachon repoga yozmang — u `MT5_PASSWORD` muhit
+> o'zgaruvchisidan yoki `.env` (git'ga kirmaydi) fayldan o'qiladi.
+
+---
+
 ## Strategiya qisqacha
 
 **G'oya:** BTC M5 da vaqtning ~70 % i shovqin. Ustunlik shovqinni bashorat
@@ -159,7 +207,7 @@ Dvigatel matematikasi testlar bilan tasdiqlangan: nol xarajatda to'liq
 stop **aynan −1.000R** beradi.
 
 ```bash
-python -m pytest tests/ -q      # 54 test
+python -m pytest tests/ -q      # 72 test
 ```
 
 ---
@@ -183,12 +231,18 @@ scalpkit/
   optimize.py        parametr qidiruvi + barqarorlik tekshiruvi
   montecarlo.py      bootstrap, risk of ruin, statistik ishonchlilik
   live.py            jonli signal (faqat o'qiydi, order yubormaydi)
+  broker/
+    base.py          umumiy broker interfeysi
+    paper.py         simulyator — savdo mantig'i shu bilan testlanadi
+    mt5broker.py     MetaTrader 5 (Exness) ijro qatlami
+  trader.py          JONLI SAVDO SIKLI — pozitsiya boshqaruvi, risk, holat
   cli.py             buyruqlar qatori
 docs/
   STRATEGY_UZ.md     to'liq qoidalar
   RISK_UZ.md         risk boshqaruvi
   VALIDATION_UZ.md   tekshirish tartibi
   CHECKLIST_UZ.md    kundalik nazorat ro'yxati
+  MT5_UZ.md          MetaTrader 5 / Exness qo'llanmasi
 ```
 
 ---
@@ -211,5 +265,9 @@ docs/
    nolni o'z ichiga olsa — ustunlik yo'q. Bunday holatda hajmni
    oshirmang; strategiyani qayta ko'rib chiqing.
 
-5. **`live.py` hech qanday order yubormaydi.** U faqat ochiq ma'lumotni
-   o'qiydi va signalni ko'rsatadi. API kaliti talab qilinmaydi.
+5. **Jonli savdo standart holatda DRY-RUN.** Haqiqiy order yuborish uchun
+   `--live` bayrog'i va qo'lda tasdiqlash kerak. Demo hisobda kamida bir
+   oy sinamasdan real pulga o'tmang.
+
+6. **Dastur faqat o'z orderlariga tegadi** (`magic = 20260905`). Qo'lda
+   ochgan pozitsiyalaringizga aralashmaydi.

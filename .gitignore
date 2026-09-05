@@ -2,7 +2,12 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# Sirlar va jonli savdo holati — HECH QACHON commit qilinmaydi
 .env
+.env.local
+state/
+*.log
 *.egg-info/
 build/
 dist/
