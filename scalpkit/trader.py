@@ -311,7 +311,8 @@ class LiveTrader:
                               f"({actual_risk:.2f} > byudjet {risk_money:.2f})"}
 
         # --- spread tekshiruvi (MT5 da asosiy xarajat) ---
-        cost_r = (2.0 * quote.spread) / dist if dist > 0 else np.inf
+        # To'liq savdo bir spread turadi: ask'da olib, bid'da sotasiz.
+        cost_r = quote.spread / dist if dist > 0 else np.inf
         if cost_r > 0.40:
             return {"action": "skip",
                     "reason": f"spread juda keng: xarajat {cost_r:.2f}R "

@@ -198,3 +198,39 @@ def test_verdict_requires_confidence_interval_above_zero():
     proven = _decide(0.2, 400, 180, 45, oos,
                      {"ci_low": 0.04, "ci_high": 0.26, "p_value": 0.01}, None)
     assert proven.code == "trade"
+
+
+def test_spread_round_trip_is_one_spread_not_two():
+    """To'liq savdo BIR spread turadi: ask'da olib, bid'da sotasiz.
+
+    Bu regressiya testi: ilgari xarajat 2 x spread deb hisoblanardi, bu esa
+    2 barobar ortiqcha konservativ baho berib, yaroqli savdolarni rad etardi.
+    """
+    from scalpkit.costs import mt5_round_trip_cost
+
+    assert mt5_round_trip_cost(spread=20.0) == pytest.approx(20.0)
+    # Komissiya esa har tomon uchun -> ikki marta
+    assert mt5_round_trip_cost(spread=20.0, commission_per_lot=3.0,
+                               contract_size=1.0) == pytest.approx(26.0)
+
+
+def test_spread_cost_paths_agree():
+    """Ikki mustaqil yo'l bir xil xarajatni berishi shart.
+
+    1) costs.mt5_cost_in_r — jonli tekshiruv va EA himoyasi ishlatadi
+    2) validate.cost_config_from_spread — backtest dvigateli ishlatadi
+
+    Ular ajralib ketsa, backtest va real savdo boshqa xarajatda ishlaydi.
+    """
+    from scalpkit.config import Config
+    from scalpkit.costs import mt5_cost_in_r
+    from scalpkit.validate import cost_config_from_spread
+
+    spread, price, stop = 20.0, 40_000.0, 200.0
+    direct = mt5_cost_in_r(spread, stop)
+
+    cfg = cost_config_from_spread(Config(), spread, price)
+    engine = (cfg.cost.taker_fee_bps * 2.0) * 1e-4 * price / stop
+
+    assert direct == pytest.approx(engine)
+    assert direct == pytest.approx(0.10)

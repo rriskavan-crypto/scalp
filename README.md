@@ -130,11 +130,35 @@ python -m scalpkit trade --symbol BTCUSD --live --risk 0.001
 Binance'da xarajat **komissiya**, Exness'da esa **spread**. Kod buni
 jonli o'lchaydi va xarajat `0.40R` dan oshsa savdoni **avtomatik rad etadi**:
 
-| Spread (BTC ~60 000) | Xarajat (stop 1.6 ATR) | Xulosa |
+| Spread (BTC ~60 000) | Xarajat (stop 1.6 ATR ≈ $240) | Xulosa |
 |---|---|---|
-| $15 | 0.12 R | yaxshi |
-| $30 | 0.25 R | qabul qilarli |
-| $60 | 0.50 R | savdo qilinmaydi |
+| $15 | 0.06 R | yaxshi |
+| $30 | 0.13 R | yaxshi |
+| $60 | 0.25 R | qabul qilarli |
+| $100 | 0.42 R | savdo qilinmaydi |
+
+To'liq savdo **bir** spread turadi (ask'da olib, bid'da sotasiz) — ikki emas.
+
+### MQL5 Expert Advisor
+
+`mql5/Experts/ScalpKit_M5.mq5` — xuddi shu strategiyaning MT5 uchun to'liq
+amalga oshirilishi. Python'siz ishlaydi va **Strategy Tester** orqali
+brokeringizning o'z ma'lumotida walk-forward o'tkazish imkonini beradi:
+
+```
+Strategy Tester -> Settings -> Forward: 1/4 -> Custom max -> Start
+   Optimization Results = o'rgatish davri
+   Forward Results      = KO'RILMAGAN davr  <- faqat shunga qarang
+```
+
+EA `OnTester()` da Python bilan bir xil mezonni qaytaradi:
+`ekspektatsiya × √savdolar`.
+
+Ikki amalga oshirishning parametrlari bir xil ekanligi avtomatik
+tekshiriladi (`tests/test_mql5_parity.py` — 57 ta taqqoslash), shunda
+backtest va real savdo ajralib ketmaydi.
+
+Qo'llanma: **[docs/MQL5_UZ.md](docs/MQL5_UZ.md)**
 
 ### Xulosa qanday chiqadi
 
@@ -222,7 +246,7 @@ Dvigatel matematikasi testlar bilan tasdiqlangan: nol xarajatda to'liq
 stop **aynan −1.000R** beradi.
 
 ```bash
-python -m pytest tests/ -q      # 72 test
+python -m pytest tests/ -q      # 138 test
 ```
 
 ---
@@ -258,6 +282,10 @@ docs/
   VALIDATION_UZ.md   tekshirish tartibi
   CHECKLIST_UZ.md    kundalik nazorat ro'yxati
   MT5_UZ.md          MetaTrader 5 / Exness qo'llanmasi
+  MQL5_UZ.md         Expert Advisor: o'rnatish va Strategy Tester
+mql5/
+  Experts/
+    ScalpKit_M5.mq5  MQL5 EA — Python bilan bir xil mantiq
 ```
 
 ---

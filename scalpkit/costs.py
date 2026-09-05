@@ -118,8 +118,11 @@ def edge_needed_report(cost: CostConfig, trades_per_day: float = 3.0) -> pd.Data
 # butun xarajat **spread**ga singdirilgan. Shuning uchun bu yerda boshqa
 # formula ishlatiladi:
 #
-#     bir tomonlama xarajat = spread (siz ask'da olib, bid'da sotasiz)
-#     to'liq savdo          = 2 x spread + komissiya (agar bor bo'lsa)
+#     bir tomonlama xarajat = spread / 2  (o'rta narxga nisbatan)
+#     to'liq savdo          = spread + 2 x komissiya
+#
+# Ya'ni: ask'da sotib olib (o'rtadan +spread/2), bid'da sotasiz
+# (o'rtadan -spread/2). Jami: BIR spread, ikki emas.
 #
 # BTCUSD spreadi Exness'da hisob turiga qarab keskin farq qiladi va
 # volatillikda kengayadi. Shuning uchun uni **jonli o'lchash** kerak.
@@ -129,13 +132,13 @@ def mt5_round_trip_cost(spread: float, commission_per_lot: float = 0.0,
                         extra_slippage: float = 0.0) -> float:
     """MT5 da bitta to'liq savdoning narxi (narx birligida, 1 birlik uchun).
 
-    spread              — joriy ask - bid
-    commission_per_lot  — hisobga qarab (Raw/Zero hisoblarda bor)
+    spread              — joriy ask - bid (to'liq savdoda bir marta to'lanadi)
+    commission_per_lot  — BIR TOMON uchun (Raw/Zero hisoblarda bor)
     """
     commission_per_unit = (
         commission_per_lot / contract_size if contract_size > 0 else 0.0
     )
-    return 2.0 * spread + 2.0 * commission_per_unit + extra_slippage
+    return spread + 2.0 * commission_per_unit + extra_slippage
 
 
 def mt5_cost_in_r(spread: float, stop_distance: float, **kwargs) -> float:

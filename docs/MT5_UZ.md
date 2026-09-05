@@ -80,12 +80,16 @@ Bu buyruq **hech qanday order yubormaydi**. U quyidagilarni ko'rsatadi:
 Exness'da komissiya odatda yo'q — **butun xarajat spreadga singdirilgan**.
 Bu Binance'dan tubdan farq qiladi va strategiyaning ishlashini hal qiladi:
 
-| Spread (BTC ~60 000) | Xarajat (stop 1.6 ATR) | Xulosa |
+| Spread (BTC ~60 000) | Xarajat (stop 1.6 ATR ≈ $240) | Xulosa |
 |---|---|---|
-| $5 | 0.04 R | yaxshi |
-| $15 | 0.12 R | yaxshi |
-| $30 | 0.25 R | qabul qilarli |
-| $60 | 0.50 R | **savdo qilmang** |
+| $5 | 0.02 R | yaxshi |
+| $15 | 0.06 R | yaxshi |
+| $30 | 0.13 R | yaxshi |
+| $60 | 0.25 R | qabul qilarli |
+| $100 | 0.42 R | **savdo qilmang** |
+
+> To'liq savdo **bir** spread turadi (ask'da olib, bid'da sotasiz) —
+> ikki emas. Komissiya esa har tomon uchun alohida hisoblanadi.
 
 Kod xarajat **0.40R dan oshsa savdoni avtomatik rad etadi**.
 
