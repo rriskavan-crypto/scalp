@@ -121,7 +121,7 @@ python -m scalpkit backtest --profile xauusd --data data/SYNTH_GOLD_5m.csv
 
 ### MetaTrader 5
 
-`ScalpKit_XAU_M5.mq5` ni XAUUSD M5 grafigiga tashlang. To'liq qo'llanma:
+`ScalpKit_XAU_Scalp.mq5` ni XAUUSD M5 grafigiga tashlang (preset: `ScalpKit_XAU_Scalp_5M.set`). To'liq qo'llanma:
 [MQL5_UZ.md](MQL5_UZ.md).
 
 BTC va oltin EA'larini bir vaqtda ishlatish mumkin — turli magic

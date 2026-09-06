@@ -294,6 +294,66 @@ def _mt5_broker(args, dry_run: bool):
     return broker
 
 
+SWAP_MODE_NAMES = {
+    0: "o'chirilgan", 1: "punktda", 2: "simvol valyutasida",
+    3: "marja valyutasida", 4: "depozit valyutasida",
+    5: "yillik foiz (joriy)", 6: "yillik foiz (ochilish)",
+    7: "qayta ochish (joriy)", 8: "qayta ochish (bid)",
+}
+DOW_NAMES = ("yakshanba", "dushanba", "seshanba", "chorshanba",
+             "payshanba", "juma", "shanba")
+
+
+def _swap_report(spec, price: float, base_profile, spread: float) -> None:
+    """Brokerning haqiqiy swapini R ga aylantirib ko'rsatadi.
+
+    Nima uchun alohida blok: skalpingda swap nolga teng, swing'da esa u
+    spreaddan katta bo'lib ketadi. Oltin D1 da spread 0.009 R, swap esa
+    0.21 R — 24 barobar katta. Bu raqamni TAXMIN QILIB bo'lmaydi, u har
+    brokerda boshqacha; shuning uchun uni terminaldan o'qiymiz.
+    """
+    from .profiles import expected_hold_days, for_timeframe
+
+    print("\n[3b] SWAP (kechalik ushlab turish xarajati)")
+    print(f"    rejim        : {SWAP_MODE_NAMES.get(spec.swap_mode, spec.swap_mode)}")
+    print(f"    long / short : {spec.swap_long:+.4f} / {spec.swap_short:+.4f}"
+          f"   (manfiy = sizdan undiriladi)")
+    rollover = spec.swap_rollover3days
+    print(f"    uch baravar  : {DOW_NAMES[rollover] if 0 <= rollover < 7 else rollover}"
+          f" kechasi  =>  7 kun ~9 kechalik to'lov")
+
+    long_pct = spec.swap_pct_per_day(+1, price)
+    short_pct = spec.swap_pct_per_day(-1, price)
+    if long_pct is None or short_pct is None:
+        print("    >>> Bu swap rejimi modellashtirilmagan — EA uni hisobga olmaydi.")
+        return
+    print(f"    kunlik ulush : long {long_pct * 100:+.5f} %  "
+          f"short {short_pct * 100:+.5f} %")
+
+    print("\n    Ushlab turish muddati bo'yicha xarajat (long, R hisobida):")
+    print(f"    {'timeframe':<12}{'strategiya':<20}{'ushlash':>9}{'kecha':>8}"
+          f"{'swap R':>9}{'spread R':>10}{'jami R':>9}")
+    for tf in ("5m", "15m", "1h", "4h", "1d"):
+        # Har TF o'z profilidan olinadi: stop chegarasi ham, tavsiya
+        # etilgan strategiya ham TF bilan o'zgaradi.
+        prof = for_timeframe(base_profile, tf)
+        tf_cfg = prof.apply(Config(), None)
+        strategy_name = tf_cfg.strategy.name
+        params = get_strategy(strategy_name, tf_cfg.strategy.params).params
+        hold = expected_hold_days(tf, strategy_name, params)
+        stop_pct = max(float(tf_cfg.risk.min_stop_pct), 1e-9)
+        units = hold * 9.0 / 7.0
+        swap_r = units * long_pct / stop_pct
+        # Spread bir xil qoladi, lekin stop TF bilan kengayadi — shuning
+        # uchun uning R dagi og'irligi kamayadi. Swapniki esa oshadi.
+        spread_r = spread / (stop_pct * price) if price > 0 else float("nan")
+        print(f"    {tf:<12}{strategy_name:<20}{hold:>8.2f}k{units:>8.1f}"
+              f"{swap_r:>9.3f}{spread_r:>10.3f}{swap_r + spread_r:>9.3f}")
+    print("    (stop = shu TF uchun eng tor ruxsat etilgan masofa — ENG YOMON holat)")
+    print("    Bu qiymatlarni `scalpkit/profiles.py` dagi swap_pct_per_day_*")
+    print("    maydonlariga yozsangiz, Python backtesti brokeringizga mos keladi.")
+
+
 def cmd_mt5_test(args) -> None:
     from .costs import mt5_cost_in_r, mt5_spread_report, verdict_for_cost_r
     from .live import evaluate_now, format_signal
@@ -351,6 +411,9 @@ def cmd_mt5_test(args) -> None:
         print(mt5_spread_report(q.spread, q.mid, atr,
                                 commission_per_lot=args.commission,
                                 contract_size=spec.contract_size).round(3).to_string())
+
+        # --- swap (swing uchun hal qiluvchi) ---
+        _swap_report(spec, q.mid, profile_for_symbol(symbol), q.spread)
 
         # --- barlar ---
         print(f"\n[4] BARLAR")

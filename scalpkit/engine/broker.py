@@ -64,8 +64,29 @@ def swap_nights(start: pd.Timestamp, end: pd.Timestamp) -> int:
     return max(0, (end.normalize() - start.normalize()).days)
 
 
+def swap_units(start: pd.Timestamp, end: pd.Timestamp,
+               rollover3_dow: int = 2, rollover3_mult: float = 3.0) -> float:
+    """Swap "kun birliklari" — uch baravar rollover kechasi hisobga olinadi.
+
+    Broker hafta oxiri qiymat sanasini bitta kechada undiradi (odatda
+    chorshanba). Shuning uchun 10 kunlik pozitsiya 10 emas, ~14 kunlik
+    swap to'laydi. Skalpingda farqi yo'q, swing'da esa D1 pozitsiyasi
+    haftalab ochiq turadi va bu farq R ning o'ndan biriga yetadi.
+    """
+    n = swap_nights(start, end)
+    if n <= 0:
+        return 0.0
+    # Rollover kechalari [start+1 kun .. start+n kun] oralig'ida sanaladi:
+    # har tunni o'sha tunga tegishli hafta kuni bo'yicha tekshiramiz.
+    nights = pd.date_range(start.normalize() + pd.Timedelta(days=1),
+                           periods=n, freq="D")
+    triple = int((nights.dayofweek == rollover3_dow).sum())
+    return float(n - triple + triple * rollover3_mult)
+
+
 def swap_cost(notional: float, side: int, start: pd.Timestamp,
               end: pd.Timestamp, cost: CostConfig) -> float:
     """MT5 swap: har kecha notionaldan ulush sifatida ushlanadi."""
     rate = (cost.swap_pct_per_day_long if side > 0 else cost.swap_pct_per_day_short)
-    return swap_nights(start, end) * abs(notional) * rate
+    units = swap_units(start, end, cost.swap_rollover3_dow, cost.swap_rollover3_mult)
+    return units * abs(notional) * rate

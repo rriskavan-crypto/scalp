@@ -126,6 +126,19 @@ BTCUSD = Profile(
         # Standart — Binance USDⓈ-M futures (VIP0): taker 5 bps, maker 2 bps.
         # BTC ni MT5 brokerida savdo qilsangiz xarajat komissiya emas,
         # spread bo'ladi — `mt5-validate` uni o'lchab avtomatik almashtiradi.
+        # SWING UCHUN MUHIM: MT5 da BTC CFD kechalik SWAP oladi, Binance
+        # perpetual esa funding. Ikkalasi bir xil narsa emas va bir xil
+        # raqam ham emas. Bu yerda swap 0 — chunki uni TAXMIN QILIB
+        # bo'lmaydi, u har brokerda boshqacha. O'lchab qo'ying:
+        #     python -m scalpkit mt5-test --symbol BTCUSD
+        # [3b] bloki brokeringizning haqiqiy qiymatini R ga aylantirib
+        # beradi; uni quyidagi maydonlarga yozing va `apply_swap` ni
+        # yoqing (o'shanda `apply_funding` ni o'chiring).
+        # MQL5 EA bu maydonlarga BOG'LIQ EMAS — u swapni terminaldan
+        # to'g'ridan-to'g'ri o'qiydi (`SwapPerUnitPerNight`).
+        "apply_swap": False,
+        "swap_pct_per_day_long": 0.0,
+        "swap_pct_per_day_short": 0.0,
         "taker_fee_bps": 5.0,
         "maker_fee_bps": 2.0,
         "slippage_bps": 1.5,
@@ -257,6 +270,43 @@ TF_WEEKEND_FLAT: dict[str, bool] = {"5m": True, "15m": True, "1h": True,
 TF_COOLDOWN: dict[str, tuple[int, int]] = {
     "5m": (6, 24), "15m": (4, 16), "1h": (3, 8), "4h": (2, 4), "1d": (1, 2),
 }
+
+
+# Kutilgan ushlash muddati — SWAP xarajatini baholash uchun.
+#
+# Nima uchun kerak: swing pozitsiyasi kechalab ochiq turadi va broker har
+# kecha swap oladi. D1 da o'rtacha ushlash ~18 kun; oltin long uchun bu
+# 0.012 %/kun x 24 birlik = 0.29 % notional, ya'ni D1 stopining (1.28 %)
+# deyarli chorak qismi. Spreadga qaraganda bu ancha katta — shuning uchun
+# xarajat filtri swapsiz noto'g'ri javob beradi.
+#
+# Ko'paytiruvchilar 8 seedli sintetik o'lchovdan olingan (o'lchangan
+# ushlash / nazariy chegara). Donchian kanaldan chiqadi, shuning uchun
+# `exit_len` dan uzoqroq turadi; maqsadli strategiyalar vaqt stopiga
+# yetmasdan maqsadga uriladi, shuning uchun undan qisqaroq.
+#
+#   donchian: o'lchangan/exit_len = 1.80, 1.63, 1.66, 1.77  -> 1.75
+#   reversion: o'lchangan/time_stop = 0.58, 0.54            -> 0.55
+#
+# Bu ANIQ qiymat emas, kattalik tartibi — u faqat FILTR uchun ishlatiladi.
+HOLD_FROM_EXIT_LEN = 1.75      # donchian_breakout
+HOLD_FROM_TIME_STOP = 0.55     # maqsad yoki vaqt stopi bo'lgan strategiyalar
+TF_HOURS: dict[str, float] = {"5m": 1 / 12, "15m": 0.25, "1h": 1.0,
+                              "4h": 4.0, "1d": 24.0}
+
+
+def expected_hold_days(timeframe: str, strategy_name: str, params: dict) -> float:
+    """Pozitsiya o'rtacha necha kun ochiq turishining bahosi."""
+    hours = TF_HOURS[timeframe]
+    if strategy_name == "donchian_breakout":
+        bars = float(params.get("exit_len", 10)) * HOLD_FROM_EXIT_LEN
+    else:
+        # Vaqt stopi "cheksiz" bo'lsa (trend-following), exit_len ga qaytamiz
+        raw = float(params.get("time_stop_bars", 24))
+        if raw > 10_000:
+            raw = float(params.get("exit_len", 10))
+        bars = raw * HOLD_FROM_TIME_STOP
+    return round(bars * hours / 24.0, 4)
 
 
 def for_timeframe(base: Profile, timeframe: str) -> Profile:

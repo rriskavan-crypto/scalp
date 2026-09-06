@@ -1,7 +1,7 @@
 ; ScalpKit preset — xauusd_15m / momentum_pullback
 ; timeframe: 15m
 InpStrategyKind=0
-InpMinAtrPct=0.000779
+InpMinAtrPct=0.0007785
 InpMaxAtrPct=0.006055
 InpAdxMin=20.0
 InpRequireHTF=true
@@ -69,6 +69,8 @@ InpWeekendFlat=true
 InpWeekCloseHourUTC=19
 InpWeekCloseDow=4
 InpWeekOpenSkipBars=6
+InpApplySwapCost=true
+InpExpectedHoldDays=0.1031
 InpEmaFast=21
 InpEmaMid=55
 InpEmaSlow=200

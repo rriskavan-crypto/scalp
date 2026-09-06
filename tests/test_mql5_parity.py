@@ -299,8 +299,12 @@ def test_every_config_field_is_passed_by_the_expert(profile_name):
     )
 
 
-@pytest.mark.parametrize("path", [CORE, *[t[3] for t in EA_FOR_PROFILE.values()]],
-                         ids=lambda p: p.name)
+# Glob bilan: kelajakda qo'shiladigan har qanday MQL5 fayli avtomatik
+# tekshiruvga tushadi (swing EA'lari shu yo'l bilan qo'shildi).
+ALL_MQL = sorted([CORE, *EXPERTS.glob("*.mq5")])
+
+
+@pytest.mark.parametrize("path", ALL_MQL, ids=lambda p: p.name)
 def test_mql_files_have_balanced_delimiters(path):
     """Kompilyatorsiz eng oddiy, lekin foydali tekshiruv."""
     clean, state = _strip(path.read_text("utf-8"))

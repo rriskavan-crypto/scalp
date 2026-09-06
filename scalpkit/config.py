@@ -34,6 +34,11 @@ class CostConfig:
     swap_pct_per_day_long: float = 0.0
     swap_pct_per_day_short: float = 0.0
     apply_swap: bool = False
+    # Brokerlar hafta oxiri qiymat sanasini bitta kechada undiradi — odatda
+    # CHORSHANBA kechasi uch baravar swap. 0=dushanba ... 6=yakshanba.
+    # Buni hisobga olmaslik 5-20 kunlik ushlashda swapni ~28 % kam ko'rsatadi.
+    swap_rollover3_dow: int = 2
+    swap_rollover3_mult: float = 3.0
 
     def round_trip_bps(self) -> float:
         """Bir to'liq savdoning (kirish + chiqish) taxminiy narxi, bps."""

@@ -238,6 +238,10 @@ class MT5Broker(Broker):
             stops_level_points=float(info.trade_stops_level),
             tick_size=getattr(info, "trade_tick_size", 0.0) or info.point,
             tick_value=getattr(info, "trade_tick_value", 0.0),
+            swap_long=float(getattr(info, "swap_long", 0.0) or 0.0),
+            swap_short=float(getattr(info, "swap_short", 0.0) or 0.0),
+            swap_mode=int(getattr(info, "swap_mode", 0) or 0),
+            swap_rollover3days=int(getattr(info, "swap_rollover3days", 3) or 3),
         )
         self._spec_cache[symbol] = spec
         return spec

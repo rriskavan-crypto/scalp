@@ -27,12 +27,13 @@ qancha "chiroyli" ko'rinmasin, javob bermaydi. Vaqtingizni yuqoridan sarflang.
 | `out/` | Natijalar chiqadi (git'ga kirmaydi) | o'qiysiz |
 | `docs/` | Hamma o'zbekcha qo'llanmalar | o'qiysiz |
 
-### B. MT5 tomoni (`ScalpKit_MT5_v2.zip` ichida — 27 fayl)
+### B. MT5 tomoni (`ScalpKit_MT5_v3.zip` ichida)
 
 | Papka | MT5 dagi joyi |
 |---|---|
 | `mql5/Include/ScalpKit/Core.mqh` | `MQL5\Include\ScalpKit\Core.mqh` |
-| `mql5/Experts/*.mq5` (6 ta) | `MQL5\Experts\ScalpKit\` |
+| `mql5/Experts/*.mq5` (8 ta) | `MQL5\Experts\ScalpKit\` |
+| — shundan `*_Swing.mq5` (2 ta) | preset kerak emas, o'zini sozlaydi |
 | `mql5/Presets/*.set` (16 ta) | `MQL5\Presets\` |
 
 ---
@@ -179,7 +180,37 @@ BTCUSD hamda XAUUSD uchun tarix qaysi sanadan boshlanadi.
 
 ---
 
-### 1-DARAJA — eng ko'p ma'lumot beradigan testlar (birinchi shularni qiling)
+### 0-DARAJA — eng qisqa yo'l: SWING EA (preset yuklash yo'q)
+
+Agar faqat swing bilan ishlamoqchi bo'lsangiz, quyidagi 6 testni
+`ScalpKit_BTC_Swing` / `ScalpKit_XAU_Swing` bilan qiling. `.set` yuklash
+kerak emas — EA grafik TF ini o'zi o'qiydi. Xato qilish imkonsiz.
+
+| № | EA | Simvol | TF | `InpStrategy` | Tarix | Savdo (2 yil) |
+|---|---|---|---|---|---|---|
+| 3.0a | `ScalpKit_BTC_Swing` | BTCUSD | **M15** | 1 (trend) | 2 yil | ~940 |
+| 3.0b | `ScalpKit_XAU_Swing` | XAUUSD | **M15** | 1 (trend) | 2 yil | ~940 |
+| 3.0c | `ScalpKit_BTC_Swing` | BTCUSD | **H1** | 1 (trend) | 2 yil | ~307 |
+| 3.0d | `ScalpKit_XAU_Swing` | XAUUSD | **H1** | 1 (trend) | 2 yil | ~307 |
+| 3.0e | `ScalpKit_BTC_Swing` | BTCUSD | **H1** | 2 (qaytish) | 2–3 yil | ~160 |
+| 3.0f | `ScalpKit_XAU_Swing` | XAUUSD | **H1** | 2 (qaytish) | 2–3 yil | ~160 |
+
+Jurnalda birinchi qatorda quyidagicha yozuv chiqishi kerak — bu EA o'zini
+to'g'ri sozlaganini tasdiqlaydi:
+
+```
+Swing sozlandi: PERIOD_H1 / trend (donchian) | magic 20261112 | ushlash ~0.73 kun | hafta oxiri ochiq qoladi
+```
+
+Chiqmasa — TF va `InpStrategy` juftligi qo'llab-quvvatlanmaydi
+(masalan qaytish + H4). EA sababini yozadi.
+
+> **Oltin uchun muhim:** swap endi kirish filtriga qo'shildi. Oltin D1 da
+> u xarajat byudjetining yarmini egallaydi. Agar D1 da savdolar kutilganidan
+> kam chiqsa, jurnalda "xarajat ... > 0.40R" qatorini qidiring — bu xato
+> emas, filtr ishlayapti.
+
+### 1-DARAJA — eng ko'p ma'lumot beradigan testlar (presetli EA'lar bilan)
 
 | № | EA | Preset | Simvol | TF | Kerakli tarix | Kutilgan savdo (2 yil) |
 |---|---|---|---|---|---|---|

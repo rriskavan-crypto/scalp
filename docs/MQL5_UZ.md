@@ -1,12 +1,30 @@
 # ScalpKit MQL5 Expert Advisor — o'rnatish va test
 
-Ikkita EA bor, **bitta umumiy yadro** ustida:
+Sakkizta EA bor, **bitta umumiy yadro** ustida
+(`mql5/Include/ScalpKit/Core.mqh`).
 
-| Fayl | Instrument | Magic |
-|---|---|---|
-| `mql5/Experts/ScalpKit_BTC_M5.mq5` | BTCUSD | 20260905 |
-| `mql5/Experts/ScalpKit_XAU_M5.mq5` | XAUUSD (oltin) | 20260906 |
-| `mql5/Include/ScalpKit/Core.mqh` | umumiy savdo mantig'i | — |
+**A. Preset yuklashni talab qiladigan EA'lar** — har bir parametr input
+sifatida ochiq, Strategy Tester'da optimizatsiya qilish uchun qulay:
+
+| Fayl | Instrument | Strategiya | Magic |
+|---|---|---|---|
+| `ScalpKit_BTC_Scalp.mq5` | BTCUSD | pullback (M5/M15) | 20260905 |
+| `ScalpKit_XAU_Scalp.mq5` | XAUUSD | pullback (M5/M15) | 20260906 |
+| `ScalpKit_BTC_Trend.mq5` | BTCUSD | trend (M15–D1) | 20260907 |
+| `ScalpKit_XAU_Trend.mq5` | XAUUSD | trend (M15–D1) | 20260908 |
+| `ScalpKit_BTC_Range.mq5` | BTCUSD | qaytish (H1/H4) | 20260909 |
+| `ScalpKit_XAU_Range.mq5` | XAUUSD | qaytish (H1/H4) | 20260910 |
+
+**B. O'zini sozlaydigan SWING EA'lari** — preset kerak emas, grafik
+timeframe'idan kalibrlashni o'zi tanlaydi:
+
+| Fayl | Instrument | Grafik TF | Magic asosi |
+|---|---|---|---|
+| `ScalpKit_BTC_Swing.mq5` | BTCUSD | M15 / H1 / H4 / D1 | 20261100 |
+| `ScalpKit_XAU_Swing.mq5` | XAUUSD | M15 / H1 / H4 / D1 | 20261200 |
+
+Swing bilan kundalik ishlash uchun **B** xavfsizroq: noto'g'ri presetni
+noto'g'ri grafikka yuklash imkoniyati umuman yo'q.
 
 Mantiq bitta joyda — tuzatish ikkalasiga ham tegadi. Farq faqat
 **kalibrlangan standart qiymatlarda**, va ular `scalpkit/profiles.py`
@@ -31,7 +49,7 @@ kod ishlaydi, lekin hech qachon savdo qilmaydi:
 | Seans (UTC) | 06–22 | **07–20** |
 | Dam olish kunlari | savdo qiladi | **yopiq** |
 | Lot hajmi | 1 BTC | **100 unsiya** |
-| Magic | 20260905 | 20260906 |
+| Magic (skalping) | 20260905 | 20260906 |
 
 BTC ning `MinAtrPct = 0.20 %` filtri oltin barlarining **~1 %** ini
 o'tkazadi — ya'ni robot jim turadi va siz sababini bilmaysiz.
@@ -48,7 +66,9 @@ hafta oxiri gapi stop-lossni chetlab o'tadi.
 2. `MQL5\Include\` ichida `ScalpKit` papkasini yarating va
    `Core.mqh` ni shu yerga nusxalang
    (yakuniy yo'l: `MQL5\Include\ScalpKit\Core.mqh`)
-3. `ScalpKit_BTC_M5.mq5` va `ScalpKit_XAU_M5.mq5` ni `MQL5\Experts\` ga nusxalang
+3. `mql5/Experts/` dagi **8 ta** `.mq5` faylni `MQL5\Experts\ScalpKit\` ga nusxalang
+   (presetli EA'lar uchun qo'shimcha: `mql5/Presets/` dagi 16 ta `.set`
+   faylni `MQL5\Presets\` ga)
 4. MT5 da **F4** bosing (MetaEditor ochiladi)
 5. Har bir EA faylini ochib **F7** bosing (Compile)
 6. `0 errors, 0 warnings` chiqishi kerak
@@ -75,9 +95,9 @@ Bu yerda strategiyaning ishlash-ishlamasligi aniqlanadi.
 
 | Sozlama | Qiymat |
 |---|---|
-| Expert | `ScalpKit_BTC_M5` yoki `ScalpKit_XAU_M5` |
+| Expert | `ScalpKit_BTC_Scalp`, `ScalpKit_*_Swing` va h.k. |
 | Symbol | `BTCUSD` / `XAUUSD` (Exness'da `BTCUSDm`, `XAUUSDm` bo'lishi mumkin) |
-| Period | **M5** |
+| Period | **presetdagi TF bilan bir xil** (Swing EA'da — istalgan swing TF) |
 | Modelling | **Every tick based on real ticks** ← eng aniq |
 | Dates | imkon qadar uzoq (kamida 1 yil) |
 | Deposit | real hisobingizga yaqin summa |
@@ -135,8 +155,8 @@ ScalpKit yakuni: 214 savdo | ekspektatsiya +0.061 R | g'alaba 43.9% | jami +13.1
 
 ## 3. Jonli ishlatish
 
-1. Kerakli instrument M5 grafigini oching (BTCUSD yoki XAUUSD)
-2. Mos EA ni grafikka tashlang (`ScalpKit_BTC_M5` yoki `ScalpKit_XAU_M5`)
+1. Kerakli instrument va timeframe grafigini oching (BTCUSD yoki XAUUSD)
+2. Mos EA ni grafikka tashlang (`ScalpKit_BTC_Scalp`, `ScalpKit_*_Swing` va h.k.)
 3. Sozlamalarni tekshiring, **OK**
 4. Yuqori o'ng burchakda ☺ tabassum belgisi chiqishi kerak
    (agar ☹ bo'lsa — algo savdo o'chirilgan)
@@ -205,7 +225,7 @@ TP1 dan keyin close < EMA21 -> yopiladi
 | "hajm minimal lotdan kichik" | Depozit kichik yoki stop keng. **Riskni oshirmang** |
 | "xarajat > 0.40R" | Spread keng. EA sizni himoya qildi |
 | Testda savdo juda kam | Uzoqroq davr oling yoki `InpAdxMin` ni pasaytiring |
-| Oltinda umuman savdo yo'q | BTC EA'sini oltinga qo'ymadingizmi? `ScalpKit_XAU_M5` ishlating |
+| Oltinda umuman savdo yo'q | BTC EA'sini oltinga qo'ymadingizmi? `ScalpKit_XAU_Scalp` yoki `ScalpKit_XAU_Swing` ishlating |
 | `Core.mqh topilmadi` | Fayl `MQL5\Include\ScalpKit\Core.mqh` yo'lida bo'lishi kerak |
 
 ---

@@ -26,7 +26,8 @@ sys.path.insert(0, str(ROOT))
 
 from scalpkit.config import Config                     # noqa: E402
 from scalpkit.features import DEFAULT_FEATURE_PARAMS   # noqa: E402
-from scalpkit.profiles import BTCUSD, XAUUSD, Profile, for_timeframe  # noqa: E402
+from scalpkit.profiles import (BTCUSD, XAUUSD, Profile,  # noqa: E402
+                              expected_hold_days, for_timeframe)
 from scalpkit.strategies import get_strategy           # noqa: E402
 
 CORE = ROOT / "mql5" / "Include" / "ScalpKit" / "Core.mqh"
@@ -132,6 +133,8 @@ SPEC: list[tuple[str, str, str, str]] = [
 
     ("=== Xarajat himoyasi ===", "", "", ""),
     ("InpMaxCostR",         "double", "c:0.40",               "Xarajat shundan oshsa savdo yo'q"),
+    ("InpApplySwapCost",    "bool",   "k:applyswap",          "Xarajatga swapni qo'shish"),
+    ("InpExpectedHoldDays", "double", "k:hold",               "Kutilgan ushlash (kun)"),
 
     ("=== Texnik ===", "", "", ""),
     ("InpEmaFast",          "int",    "f:ema_fast",           ""),
@@ -171,8 +174,16 @@ def _fmt(value, kind: str) -> str:
         return str(int(round(float(value))))
     if kind == "long":
         return str(int(value))
-    text = f"{float(value):.6f}".rstrip("0")
-    return text + "0" if text.endswith(".") else text
+    # 6 xona yetarli emas: oltin M15 uchun min_atr_pct = 0.0007785 bo'lib,
+    # u 0.000779 ga yaxlitlanardi va EA Python bilan ajralib ketardi.
+    # `repr` eng qisqa aylanma-aniq shaklni beradi.
+    v = float(value)
+    text = repr(v)
+    if "e" in text or "E" in text:          # MQL5 uchun o'nlik shaklda yozamiz
+        text = f"{v:.15f}".rstrip("0")
+        if text.endswith("."):
+            text += "0"
+    return text
 
 
 def resolve(source: str, profile: Profile, params: dict, risk,
@@ -191,6 +202,12 @@ def resolve(source: str, profile: Profile, params: dict, risk,
             return STRATEGY_KIND[strategy_name]
         if key == "tf":
             return MQL_TIMEFRAME[profile.timeframe]
+        if key == "hold":
+            return expected_hold_days(profile.timeframe, strategy_name, params)
+        if key == "applyswap":
+            # Kripto perpetual emas, MT5 CFD — har ikkalasida ham swap bor.
+            # M5/M15 da u nolga yaqin, lekin filtr baribir to'g'ri ishlaydi.
+            return True
     if kind == "c":
         base = profile.name.split("_")[0]
         return MAGIC[(base, strategy_name)] if key == "MAGIC" else key
@@ -324,6 +341,222 @@ PRESET_TIMEFRAMES = {
 }
 
 
+# ==================================================================
+#  SWING EA — grafik timeframe'idan o'zini sozlaydigan variant
+# ==================================================================
+#  Nima uchun alohida: oddiy EA + `.set` juftligida foydalanuvchi
+#  noto'g'ri presetni noto'g'ri grafikka yuklashi mumkin, va bu jimgina
+#  noto'g'ri kalibrlash beradi (M5 uchun `min_atr_pct = 0.20 %` D1 da
+#  hamma barni o'tkazib yuboradi). Bu yerda EA `Period()` ni o'qiydi va
+#  o'sha timeframe uchun kalibrlangan blokni O'ZI tanlaydi — noto'g'ri
+#  juftlik tuzish IMKONSIZ bo'ladi. Preset yuklash umuman kerak emas.
+
+SWING_TFS = ("15m", "1h", "4h", "1d")
+SWING_TF_INDEX = {"15m": 1, "1h": 2, "4h": 3, "1d": 4}
+
+# (strategiya, ruxsat etilgan timeframe'lar) — o'lchangan savdo chastotasi
+# bo'yicha. Chegara: 3 yillik tarixda kamida ~100 savdo.
+#   donchian  : 15m 1629 | 1h 485 | 4h 142 | 1d 11   (1d — chegaradan past,
+#               lekin trend-following uchun asosiy timeframe, ogohlantirish
+#               bilan qoldiriladi)
+#   reversion : 15m 304 | 1h 105 | 4h 33 | 1d 3      (4h/1d — juda kam)
+SWING_STRATEGIES = {
+    1: ("donchian_breakout", SWING_TFS),
+    2: ("range_reversion", ("15m", "1h")),
+}
+
+# Foydalanuvchi o'zgartirishi mumkin bo'lgan inputlar — kalibrlangan
+# blokdan KEYIN qo'llanadi, shuning uchun ular ustun turadi.
+SWING_USER_INPUTS = [
+    ("InpRiskPerTrade",     "double", "Savdo boshiga risk (0.005 = 0.5 %)"),
+    ("InpDailyLossLimit",   "double", "Kunlik zarar chegarasi"),
+    ("InpMaxLeverage",      "double", "Maksimal leverage"),
+    ("InpMaxCostR",         "double", "Xarajat shundan oshsa savdo yo'q"),
+    ("InpApplySwapCost",    "bool",   "Xarajatga swapni (kechalik) qo'shish"),
+    ("InpAllowLong",        "bool",   "Long savdolarga ruxsat"),
+    ("InpAllowShort",       "bool",   "Short savdolarga ruxsat"),
+]
+
+# `weekend_flat` — YAGONA timeframe'ga bog'liq bo'lgan qiymat: oltinda
+# M15/H1 da yoqilgan, H4/D1 da o'chirilgan (swing hafta oxiri gapini
+# qabul qiladi, uning o'rniga stop kengroq). Oddiy bool input uni jimgina
+# bosib ketardi — masalan oltin M15 da hafta oxiri himoyasini yo'q qilardi.
+# Shuning uchun u UCH HOLATLI: -1 = profil qaror qiladi.
+SWING_TRISTATE = ("InpWeekendFlat",)
+
+SWING_SKIP = {name for name, _, _ in SWING_USER_INPUTS} | set(SWING_TRISTATE) | {
+    "InpMagic", "InpDeviation", "InpServerUtcOffset", "InpVerbose",
+    "InpExpectedTimeframe", "InpStrategyKind",
+}
+
+
+def swing_block(base: Profile, tf: str, kind: int) -> str:
+    """Bitta (timeframe x strategiya) uchun kalibrlangan qiymatlar bloki."""
+    strategy_name = SWING_STRATEGIES[kind][0]
+    profile = for_timeframe(base, tf)
+    cfg = profile.apply(Config(), strategy_name)
+    params = merged_params(profile, strategy_name)
+
+    lines = []
+    for name, ctype, source, _ in SPEC:
+        if not ctype or (name in SWING_SKIP and name not in SWING_TRISTATE):
+            continue
+        raw = resolve(source, profile, params, cfg.risk, strategy_name)
+        value = str(raw) if source.startswith("c:") and not str(raw).lstrip("-").isdigit() \
+            else _fmt(raw, ctype)
+        lines.append(f"   g_cfg.{name[3:]:<20} = {value};")
+
+    stop_pct = float(cfg.risk.min_stop_pct) * 100.0
+    hold = expected_hold_days(tf, strategy_name, params)
+    return (f"//--- {tf.upper()} / {strategy_name}: stop >= {stop_pct:.3f} %, "
+            f"ushlash ~{hold:.2f} kun\n"
+            f"void Apply_{tf.upper()}_{kind}()\n{{\n" + "\n".join(lines) + "\n}\n")
+
+
+def render_swing(base: Profile, filename: str, title: str,
+                 magic_base: int) -> str:
+    blocks, dispatch = [], []
+    for kind, (strategy_name, tfs) in sorted(SWING_STRATEGIES.items()):
+        for tf in SWING_TFS:
+            if tf not in tfs:
+                continue
+            blocks.append(swing_block(base, tf, kind))
+            dispatch.append(
+                f"   if(kind == {kind} && tf == {MQL_TIMEFRAME[tf]}) "
+                f"{{ Apply_{tf.upper()}_{kind}(); return {SWING_TF_INDEX[tf]}; }}")
+
+    user_inputs, user_assign = [], []
+    for name, ctype, comment in SWING_USER_INPUTS:
+        spec = next(s for s in SPEC if s[0] == name)
+        # Standart qiymat H4/donchian profilidan (o'rta swing) olinadi
+        prof = for_timeframe(base, "4h")
+        cfg = prof.apply(Config(), "donchian_breakout")
+        raw = resolve(spec[2], prof, merged_params(prof, "donchian_breakout"),
+                      cfg.risk, "donchian_breakout")
+        line = f"input {ctype:<7} {name}{' ' * max(1, 24 - len(name))}= {_fmt(raw, ctype)};"
+        user_inputs.append(f"{line}{'':<{max(1, 46 - len(line))}}// {comment}")
+        user_assign.append(f"   g_cfg.{name[3:]:<20} = {name};")
+
+    tf_list = ", ".join(t.upper() for t in SWING_TFS)
+    rev_list = ", ".join(t.upper() for t in SWING_STRATEGIES[2][1])
+    return f'''//+------------------------------------------------------------------+
+//|   {title}
+//|
+//|   {base.description}
+//|   Savdo vaqti : {base.calendar.describe()}
+//|
+//|   PRESET KERAK EMAS. EA grafik timeframe'ini o'qiydi va o'sha
+//|   timeframe uchun kalibrlangan parametrlarni O'ZI tanlaydi.
+//|   Ruxsat etilgan: {tf_list}
+//|   O'rtachaga qaytish faqat: {rev_list}
+//|
+//|   Nima uchun: parametrlar (ATR chegaralari, stop foizlari, tanaffuslar)
+//|   timeframe'ga bog'liq. M5 uchun kalibrlangan qiymat D1 da hamma barni
+//|   o'tkazib yuboradi. Preset yuklashni unutish shunday jimgina xatoga
+//|   olib keladi — bu yerda u imkonsiz.
+//|
+//|   BU FAYL AVTOMATIK GENERATSIYA QILINGAN.
+//|   Qo'lda tahrirlamang — `python tools/gen_mql5_experts.py` ishlating.
+//+------------------------------------------------------------------+
+#property copyright "scalpkit"
+#property link      "https://github.com/rriskavan-crypto/scalp"
+#property version   "1.10"
+#property description "{title}"
+
+#include <ScalpKit/Core.mqh>
+
+input group "=== Strategiya ==="
+input int     InpStrategy             = 1;    // 1 = trend (donchian), 2 = o'rtachaga qaytish
+
+input group "=== Risk va xarajat ==="
+{chr(10).join(user_inputs)}
+
+input group "=== Hafta chegarasi ==="
+input int     InpWeekendFlatMode      = -1;   // -1 = profil qaror qiladi, 0 = o'chirilgan, 1 = yoqilgan
+
+input group "=== Texnik ==="
+input long    InpMagicBase            = {magic_base}; // Magic asosi (+strategiya, +TF)
+input int     InpDeviation            = 30;   // Maks. sirpanish (punkt)
+input int     InpServerUtcOffset      = -99;  // Server-UTC farqi, -99 = avto
+input bool    InpVerbose              = true; // Batafsil log
+
+//+------------------------------------------------------------------+
+//| Timeframe x strategiya bloklari (profillardan generatsiya qilingan)
+//+------------------------------------------------------------------+
+{chr(10).join(blocks)}
+//+------------------------------------------------------------------+
+//| Grafik timeframe'iga mos blokni tanlaydi.
+//| Qaytaradi: TF indeksi (1..4), yoki 0 — qo'llab-quvvatlanmaydi.
+//+------------------------------------------------------------------+
+int ApplyProfileForChart(const int kind, const ENUM_TIMEFRAMES tf)
+{{
+{chr(10).join(dispatch)}
+   return 0;
+}}
+
+//+------------------------------------------------------------------+
+//| Parametrlarni yadroga uzatish                                    |
+//+------------------------------------------------------------------+
+bool LoadConfig()
+{{
+   int kind = InpStrategy;
+   if(kind != 1 && kind != 2)
+   {{
+      PrintFormat("XATO: InpStrategy = %d. Ruxsat: 1 = trend, 2 = o'rtachaga qaytish.", kind);
+      return false;
+   }}
+
+   int tfIdx = ApplyProfileForChart(kind, Period());
+   if(tfIdx == 0)
+   {{
+      PrintFormat("XATO: %s grafigi bu strategiya uchun kalibrlanmagan. "
+                  "Trend uchun: {tf_list}. O'rtachaga qaytish uchun: {rev_list}. "
+                  "Sabab: bu juftlikda savdo soni statistik xulosa uchun juda kam.",
+                  EnumToString(Period()));
+      return false;
+   }}
+
+   //--- kalibrlangan blokdan KEYIN — foydalanuvchi qiymatlari ustun turadi
+{chr(10).join(user_assign)}
+
+   // -1 bo'lsa kalibrlangan blokdagi qiymat saqlanadi
+   if(InpWeekendFlatMode >= 0)
+      g_cfg.WeekendFlat     = (InpWeekendFlatMode == 1);
+
+   g_cfg.StrategyKind       = kind;
+   g_cfg.ExpectedTimeframe  = PERIOD_CURRENT;   // EA o'zini sozlaydi
+   g_cfg.Magic              = InpMagicBase + kind * 10 + tfIdx;
+   g_cfg.Deviation          = InpDeviation;
+   g_cfg.ServerUtcOffset    = InpServerUtcOffset;
+   g_cfg.Verbose            = InpVerbose;
+
+   PrintFormat("Swing sozlandi: %s / %s | magic %I64d | ushlash ~%.2f kun | "
+               "hafta oxiri %s",
+               EnumToString(Period()),
+               (kind == 1) ? "trend (donchian)" : "o'rtachaga qaytish",
+               g_cfg.Magic, g_cfg.ExpectedHoldDays,
+               g_cfg.WeekendFlat ? "pozitsiyasiz" : "ochiq qoladi");
+   return true;
+}}
+
+int  OnInit()                    {{ if(!LoadConfig()) return INIT_PARAMETERS_INCORRECT;
+                                   return ScalpKit_OnInit(); }}
+void OnDeinit(const int reason)  {{ ScalpKit_OnDeinit(reason); }}
+void OnTick()                    {{ ScalpKit_OnTick(); }}
+double OnTester()                {{ return ScalpKit_OnTester(); }}
+void OnTesterDeinit()            {{ ScalpKit_OnTesterDeinit(); }}
+//+------------------------------------------------------------------+
+'''
+
+
+SWING_TARGETS = [
+    (BTCUSD, "ScalpKit_BTC_Swing.mq5",
+     "ScalpKit BTC/USD — SWING (M15-D1, o'zini sozlaydi)", 20261100),
+    (XAUUSD, "ScalpKit_XAU_Swing.mq5",
+     "ScalpKit XAU/USD (oltin) — SWING (M15-D1, o'zini sozlaydi)", 20261200),
+]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true",
@@ -356,6 +589,17 @@ def main() -> int:
                     stale.append(name)
             else:
                 target.write_text(body, encoding="utf-8")
+
+    for base, filename, title, magic_base in SWING_TARGETS:
+        text = render_swing(base, filename, title, magic_base)
+        path = EXPERTS / filename
+        if args.check:
+            if not path.exists() or path.read_text(encoding="utf-8") != text:
+                stale.append(filename)
+        else:
+            path.write_text(text, encoding="utf-8")
+            print(f"  {filename:<26} {len(text.splitlines()):>4} qator, "
+                  f"preset kerak emas")
 
     if not args.check:
         print(f"  {len(list(PRESETS.glob('*.set')))} ta preset -> {PRESETS.relative_to(ROOT)}/")

@@ -180,8 +180,8 @@ To'liq savdo **bir** spread turadi (ask'da olib, bid'da sotasiz) — ikki emas.
 
 ### MQL5 Expert Advisor
 
-Ikkita EA, bitta umumiy yadro (`mql5/Include/ScalpKit/Core.mqh`):
-`ScalpKit_BTC_M5.mq5` va `ScalpKit_XAU_M5.mq5`. Python'siz ishlaydi va
+Sakkizta EA, bitta umumiy yadro (`mql5/Include/ScalpKit/Core.mqh`):
+8 ta EA (`ScalpKit_*_Scalp/Trend/Range/Swing.mq5`). Python'siz ishlaydi va
 **Strategy Tester** orqali brokeringizning o'z ma'lumotida walk-forward
 o'tkazish imkonini beradi:
 
@@ -341,6 +341,8 @@ mql5/
     ScalpKit_XAU_Trend.mq5   XAUUSD swing trend (M15-D1)
     ScalpKit_BTC_Range.mq5   BTCUSD o'rtachaga qaytish (H1/H4)
     ScalpKit_XAU_Range.mq5   XAUUSD o'rtachaga qaytish (H1/H4)
+    ScalpKit_BTC_Swing.mq5   BTCUSD SWING — grafik TF idan o'zini sozlaydi
+    ScalpKit_XAU_Swing.mq5   XAUUSD SWING — grafik TF idan o'zini sozlaydi
   Presets/                   16 ta timeframe preseti (.set)
 tools/
   gen_mql5_experts.py     EA fayllarini profillardan generatsiya qiladi

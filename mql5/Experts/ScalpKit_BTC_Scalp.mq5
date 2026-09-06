@@ -115,6 +115,8 @@ input int     InpWeekOpenSkipBars     = 6;    // Hafta ochilishida kutiladigan b
 
 input group "=== Xarajat himoyasi ==="
 input double  InpMaxCostR             = 0.40; // Xarajat shundan oshsa savdo yo'q
+input bool    InpApplySwapCost        = true; // Xarajatga swapni qo'shish
+input double  InpExpectedHoldDays     = 0.0458; // Kutilgan ushlash (kun)
 
 input group "=== Texnik ==="
 input int     InpEmaFast              = 21;
@@ -207,6 +209,8 @@ void LoadConfig()
    g_cfg.WeekCloseDow         = InpWeekCloseDow;
    g_cfg.WeekOpenSkipBars     = InpWeekOpenSkipBars;
    g_cfg.MaxCostR             = InpMaxCostR;
+   g_cfg.ApplySwapCost        = InpApplySwapCost;
+   g_cfg.ExpectedHoldDays     = InpExpectedHoldDays;
    g_cfg.EmaFast              = InpEmaFast;
    g_cfg.EmaMid               = InpEmaMid;
    g_cfg.EmaSlow              = InpEmaSlow;

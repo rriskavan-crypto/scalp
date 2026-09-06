@@ -72,6 +72,8 @@ struct ScalpKitConfig
    double   HalveRiskDD;           // Shu drawdownda risk yarmiga
    //--- === Xarajat himoyasi ===
    double   MaxCostR;              // Xarajat shundan oshsa savdo yo'q
+   bool     ApplySwapCost;         // Xarajatga swapni (kechalik) qo'shish
+   double   ExpectedHoldDays;      // Kutilgan ushlash muddati (kun)
    //--- === Yo'nalish ===
    bool     AllowLong;             // Long savdolarga ruxsat
    bool     AllowShort;            // Short savdolarga ruxsat
@@ -136,6 +138,7 @@ datetime g_lastBarTime = 0;
 int      g_barsSinceGap = 9999;   // hafta/bayram uzilishidan keyingi barlar
 int      g_serverUtcOffset = 0;
 int      g_barCounter = 0;          // tanaffuslarni sanash uchun
+bool     g_swapModeWarned = false;  // noma'lum swap rejimi haqida bir marta
 int      g_blockUntilBar = -1;
 int      g_consecLosses = 0;
 int      g_tradesToday = 0;
@@ -1239,6 +1242,85 @@ void CloseAllPositions(const string reason)
    }
 }
 
+//==================================================================
+//  USHLAB TURISH XARAJATI (SWAP) — SWING UCHUN HAL QILUVCHI
+//==================================================================
+//  Skalpingda pozitsiya bir necha bar turadi va swap nolga teng.
+//  Swing'da esa boshqacha: D1 da o'rtacha ushlash ~18 kun, oltin long
+//  uchun swap 0.012 %/kun. Broker hafta oxiri qiymat sanasini bitta
+//  kechada undiradi (odatda chorshanba x3), shuning uchun 18 kun ~24
+//  kechalik swap to'laydi: 0.29 % notional. D1 stopi 1.28 % bo'lsa, bu
+//  0.23 R — spreaddan o'nlab marta katta. Faqat spreadga qaraydigan
+//  filtr bu yerda noto'g'ri javob beradi.
+//
+//  Natija BIRLIK uchun narx birligida qaytariladi (stop masofasi bilan
+//  bir xil o'lchov), shuning uchun to'g'ridan-to'g'ri R ga bo'linadi.
+//  MUSBAT = xarajat. Daromad (manfiy swap) hisobga OLINMAYDI: filtr
+//  ehtiyotkor bo'lishi kerak, daromadni oldindan yozib qo'yish emas.
+//------------------------------------------------------------------
+double SwapPerUnitPerNight(const int side)
+{
+   long mode = SymbolInfoInteger(_Symbol, SYMBOL_SWAP_MODE);
+   if(mode == SYMBOL_SWAP_MODE_DISABLED)
+      return 0.0;
+
+   double raw = (side > 0) ? SymbolInfoDouble(_Symbol, SYMBOL_SWAP_LONG)
+                           : SymbolInfoDouble(_Symbol, SYMBOL_SWAP_SHORT);
+   if(raw == 0.0)
+      return 0.0;
+
+   double cost = -raw;                 // brokerda manfiy = undiriladi
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double contract = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+   if(contract <= 0.0)
+      contract = 1.0;
+
+   switch((int)mode)
+   {
+      case SYMBOL_SWAP_MODE_POINTS:
+         return cost * point;
+
+      // Yillik foiz -> bir kechalik narx ulushi
+      case SYMBOL_SWAP_MODE_INTEREST_CURRENT:
+      case SYMBOL_SWAP_MODE_INTEREST_OPEN:
+         return cost / 100.0 * price / 360.0;
+
+      // Lot uchun pul -> birlik uchun pul
+      case SYMBOL_SWAP_MODE_CURRENCY_SYMBOL:
+      case SYMBOL_SWAP_MODE_CURRENCY_MARGIN:
+      case SYMBOL_SWAP_MODE_CURRENCY_DEPOSIT:
+         return cost / contract;
+
+   }
+
+   // REOPEN_* rejimlari pozitsiyani qayta ochish orqali swap oladi — bu
+   // yerda modellashtirilmaydi. Nol qaytaramiz va bir marta ogohlantiramiz.
+   if(!g_swapModeWarned)
+   {
+      g_swapModeWarned = true;
+      PrintFormat("OGOHLANTIRISH: swap rejimi %d modellashtirilmagan — "
+                  "ushlab turish xarajati hisobga olinmaydi.", (int)mode);
+   }
+   return 0.0;
+}
+
+// Kutilgan ushlash davomida to'planadigan swap (birlik uchun, narx birligida).
+double ExpectedSwapPerUnit(const int side)
+{
+   if(!g_cfg.ApplySwapCost || g_cfg.ExpectedHoldDays <= 0.0)
+      return 0.0;
+
+   double perNight = SwapPerUnitPerNight(side);
+   if(perNight <= 0.0)
+      return 0.0;                       // daromadni hisobga olmaymiz
+
+   // Uch baravar rollover: haftada bir kecha x3, ya'ni 7 kunda 9 birlik.
+   // Python tomonida `swap_units()` aynan shu hisobni aniq sanaydi.
+   double units = g_cfg.ExpectedHoldDays * (9.0 / 7.0);
+   return perNight * units;
+}
+
 void TryOpen(const SignalResult &sig)
 {
    double a = sig.atr;
@@ -1264,11 +1346,15 @@ void TryOpen(const SignalResult &sig)
 
    //--- XARAJAT HIMOYASI
    // To'liq savdo BIR spread turadi: ask'da olib, bid'da sotasiz.
-   double costR = spread / dist;
+   // Swing'da bunga ushlab turish (swap) xarajati qo'shiladi.
+   double swapCost = ExpectedSwapPerUnit(sig.side);
+   double costR    = (spread + swapCost) / dist;
    if(costR > g_cfg.MaxCostR)
    {
       Log(StringFormat("Savdo o'tkazib yuborildi: xarajat %.3fR > %.2fR "
-                       "(spread %.2f, stop %.2f)", costR, g_cfg.MaxCostR, spread, dist));
+                       "(spread %.2f, swap %.2f / %.1f kun, stop %.2f)",
+                       costR, g_cfg.MaxCostR, spread, swapCost,
+                       g_cfg.ExpectedHoldDays, dist));
       return;
    }
 

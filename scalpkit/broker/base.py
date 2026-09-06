@@ -37,6 +37,35 @@ class SymbolSpec:
     stops_level_points: float   # SL/TP narxdan shuncha punkt uzoq bo'lishi shart
     tick_size: float = 0.0
     tick_value: float = 0.0
+    # Swap — swing savdosining ikkinchi katta xarajati. Broker qiymatlari:
+    # manfiy = sizdan undiriladi, musbat = sizga to'lanadi.
+    swap_long: float = 0.0
+    swap_short: float = 0.0
+    swap_mode: int = 0              # ENUM_SYMBOL_SWAP_MODE
+    swap_rollover3days: int = 3     # 0=yakshanba ... 3=chorshanba (MT5 tartibi)
+
+    def swap_pct_per_day(self, side: int, price: float) -> float | None:
+        """Kechalik swapni narx ulushiga aylantiradi (musbat = xarajat).
+
+        `None` — swap rejimi modellashtirilmagan (REOPEN_*). MQL5 tomonida
+        `SwapPerUnitPerNight()` aynan shu hisobni bajaradi.
+        """
+        SWAP_DISABLED, SWAP_POINTS = 0, 1
+        SWAP_CURRENCY = (2, 3, 4)          # SYMBOL, MARGIN, DEPOSIT
+        SWAP_INTEREST = (5, 6)             # CURRENT, OPEN
+
+        if self.swap_mode == SWAP_DISABLED or price <= 0:
+            return 0.0
+        raw = self.swap_long if side > 0 else self.swap_short
+        cost = -raw                        # brokerda manfiy = undiriladi
+        if self.swap_mode == SWAP_POINTS:
+            return cost * self.point / price
+        if self.swap_mode in SWAP_INTEREST:
+            return cost / 100.0 / 360.0
+        if self.swap_mode in SWAP_CURRENCY:
+            contract = self.contract_size or 1.0
+            return cost / contract / price
+        return None
 
     def normalize_volume(self, volume: float) -> float:
         """Hajmni broker qadamiga moslaydi (pastga qarab yaxlitlaydi)."""

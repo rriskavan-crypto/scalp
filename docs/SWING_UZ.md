@@ -19,11 +19,38 @@ Volatilitet timeframe bilan taxminan √T qonuni bo'yicha o'sadi, spread esa
 | H4 | 1.594 % | 2.39 % | 0.013 R | 7.2x arzon |
 | **D1** | 4.173 % | 6.26 % | **0.005 R** | **18.9x arzon** |
 
-Oltinda ham xuddi shunday (17x). Ma'nosi: **M5 da ishlashi uchun 0.10R
-ustunlik kerak bo'lgan strategiya D1 da 0.01R bilan ham ishlaydi.**
+Yuqoridagi jadval faqat **spreadni** hisoblaydi. Bu to'liq rasm emas.
 
-Shuning uchun M5 da ishlamaydigan g'oya H4 da ishlashi mumkin — bozor
-o'zgargani uchun emas, xarajat to'sig'i qulagani uchun.
+### Tuzatish: swap qo'shilganda rasm o'zgaradi
+
+Spread TF bilan arzonlashadi, lekin **swap aksincha qimmatlashadi** —
+chunki yuqori TF'da pozitsiya uzoqroq ochiq turadi. Oltin uchun ikkalasini
+birga hisoblaganimizda:
+
+| TF | spread R | swap R | **jami R** | eng arzonmi |
+|---|---|---|---|---|
+| M5 | 0.168 | 0.008 | 0.176 | |
+| M15 | 0.097 | 0.024 | 0.121 | |
+| **H1** | 0.048 | 0.048 | **0.096** | **← eng arzon** |
+| H4 | 0.023 | 0.093 | 0.116 | |
+| D1 | 0.009 | **0.212** | **0.221** | M15 dan ham qimmat |
+
+**Oltin uchun D1 arzon EMAS.** Spread bo'yicha u 19x arzon, lekin ~17.5
+kunlik ushlash swapni 0.21R ga olib chiqadi va umumiy xarajat M15
+darajasidan ham yuqori bo'ladi. Eng arzon nuqta — **H1**, aynan spread
+bilan swap teng bo'lgan joyda.
+
+Bu suhbat boshida aytilgan "yuqori TF har doim arzonroq" xulosasining
+tuzatilishi. U faqat spread uchun to'g'ri edi.
+
+> BTC uchun bu jadval yo'q: repodagi BTC profili Binance perpetual
+> (funding) modelida, MT5 CFD swapi esa o'lchanmagan — u brokerga qarab
+> juda katta farq qiladi. O'z raqamingizni oling:
+> `python -m scalpkit mt5-test --symbol BTCUSD` → `[3b]` bloki.
+
+Shuning uchun M5 da ishlamaydigan g'oya H1/H4 da ishlashi mumkin — bozor
+o'zgargani uchun emas, xarajat to'sig'i pasaygani uchun. Lekin D1 ga
+o'tish oltinda xarajatni qaytadan oshiradi.
 
 O'zingiz ko'ring:
 
@@ -128,11 +155,57 @@ Oltin D1, risk $50, stop 1.28 %, notional $3 918:
 **56 barobar katta**. Backtest buni hisobga oladi (`apply_swap`).
 
 > **BROKERINGIZNING HAQIQIY SWAP QIYMATINI TEKSHIRING.** Repodagi
-> standart qiymatlar (long −0.012 %/kun) taxminiy. MT5 da:
-> Market Watch → instrument → o'ng tugma → Specification → Swap.
+> standart qiymat (oltin long −0.012 %/kun) bir kechalik carry hisobidan
+> chiqarilgan (~4.5 % yillik / 360), lekin har brokerda ustama boshqacha.
+> O'lchash: `python -m scalpkit mt5-test --symbol XAUUSD` → `[3b]` bloki
+> brokeringizning qiymatini R ga aylantirib beradi.
 
 BTC perpetual'da swap emas, **funding** bor (0.01 %/8 soat) — u ham
-modellashtirilgan.
+modellashtirilgan. Lekin **MT5 dagi BTC CFD funding emas, swap oladi**;
+repoda uning qiymati 0 qo'yilgan (taxmin qilib bo'lmaydi). Shu sababli
+BTC swing backtestlari optimistik bo'lishi mumkin — o'z raqamingizni
+o'lchab qo'ying.
+
+### Uch baravar rollover (chorshanba)
+
+Broker hafta oxiri qiymat sanasini bitta kechada undiradi — odatda
+chorshanba kechasi swap **uch baravar** olinadi. Ya'ni 7 kunlik pozitsiya
+7 emas, **9 kechalik** to'lov qiladi (+28.6 %).
+
+| Ushlash | sodda hisob | haqiqiy | farq |
+|---|---|---|---|
+| 3 kun | 3 kecha | 5 birlik | +67 % |
+| 7 kun | 7 kecha | 9 birlik | +29 % |
+| 18 kun | 18 kecha | 24 birlik | +33 % |
+
+Buni hisobga olmaslik swing natijalarini yaxshi ko'rsatadi. Sintetik
+ma'lumotda o'lchangan ta'sir: oltin D1 da savdo boshiga **−0.010 R**,
+H4 da −0.005 R, H1 da −0.003 R. BTC ga ta'siri yo'q (unda swap 0).
+
+### EA endi swapni kirish filtriga qo'shadi
+
+MQL5 tomonida xarajat filtri avval faqat spreadga qarardi:
+
+```
+costR = spread / stop            // eski
+costR = (spread + swap) / stop   // yangi
+```
+
+Swap terminaldan **to'g'ridan-to'g'ri o'qiladi** (`SYMBOL_SWAP_LONG/SHORT`,
+barcha keng tarqalgan rejimlar bilan), shuning uchun u sizning
+brokeringizning haqiqiy qiymati bo'ladi — repodagi taxmin emas.
+
+Ikkita muhim tafsilot:
+
+- **Daromad hisobga olinmaydi.** Short pozitsiyada swap musbat bo'lsa
+  (oltin shortida shunday), filtr uni chegirma sifatida yozmaydi. Filtr
+  ehtiyotkor bo'lishi kerak.
+- **Filtr hech bir sozlamani o'chirib qo'ymaydi.** Bu test bilan
+  qulflangan: har bir yetkazilgan konfiguratsiyada odatiy stop masofasida
+  `spread + swap < MaxCostR` (0.40 R). Eng qattig'i oltin D1 — 0.22 R,
+  ya'ni byudjetning yarmidan ko'pi ishlatiladi, lekin savdo to'silmaydi.
+
+O'chirish kerak bo'lsa: `InpApplySwapCost = false`.
 
 ---
 
@@ -155,9 +228,48 @@ python -m scalpkit validate  --profile xauusd_4h --data data/XAUUSD_5m.csv --spr
 Mavjud profillar: `btcusd_5m`, `btcusd_15m`, `btcusd_1h`, `btcusd_4h`,
 `btcusd_1d` va oltin uchun `xauusd_*`.
 
-### MetaTrader 5
+### MetaTrader 5 — SWING uchun tavsiya etilgan yo'l
 
-Oltita EA — 2 instrument x 3 strategiya:
+**Ikkita EA, preset kerak emas.** Ular grafik timeframe'ini o'qiydi va
+o'sha TF uchun kalibrlangan parametrlarni **o'zlari** tanlaydi:
+
+| Fayl | Instrument | Grafik TF | Magic asosi |
+|---|---|---|---|
+| `ScalpKit_BTC_Swing.mq5` | BTCUSD | M15 / H1 / H4 / D1 | 20261100 |
+| `ScalpKit_XAU_Swing.mq5` | XAUUSD | M15 / H1 / H4 / D1 | 20261200 |
+
+Ishlatish: EA ni kerakli grafikka tashlang — **tamom**. `.set` yuklash yo'q,
+noto'g'ri preset yuklash xavfi yo'q.
+
+Bitta sozlama muhim:
+
+```
+InpStrategy = 1   // trend (donchian)          — M15, H1, H4, D1
+InpStrategy = 2   // o'rtachaga qaytish        — faqat M15, H1
+```
+
+`InpStrategy = 2` ni H4/D1 grafigida ishlatsangiz EA **ishga tushmaydi** va
+sababini yozadi: 3 yillik tarixda H4 da ~25-33, D1 da ~3-4 ta savdo
+chiqadi (8 seedli o'lchov), ya'ni statistik xulosa chiqarib bo'lmaydi.
+
+Magic raqam avtomatik: `asos + strategiya x 10 + TF indeksi`. Ya'ni BTC
+H1-trend = 20261112, BTC H4-trend = 20261113. Bir vaqtda 12 ta
+kombinatsiyani ishlatsangiz ham ular bir-biriga tegmaydi.
+
+Boshqa sozlamalar (risk, kunlik chegara, leverage, xarajat byudjeti)
+kalibrlangan blokdan **keyin** qo'llanadi — ular sizniki.
+
+> Hafta oxiri qoidasi uch holatli: `InpWeekendFlatMode = -1` (standart)
+> profil qaror qilsin degani. Oltinda u M15/H1 da yoqiladi, H4/D1 da
+> o'chiriladi. Buni oddiy `true/false` input qilib bo'lmasdi — u
+> timeframe'ga bog'liq yagona qiymat.
+
+### MetaTrader 5 — presetli yo'l (avvalgi EA'lar)
+
+Oltita EA — 2 instrument x 3 strategiya. Bular **saqlanib qoldi**: ular
+har bir parametrni input qilib ko'rsatadi, shuning uchun Strategy Tester'da
+optimizatsiya qilish uchun qulay. Swing uchun kundalik ishlatishda esa
+yuqoridagi ikkita EA xavfsizroq.
 
 | Fayl | Instrument | Strategiya | Magic |
 |---|---|---|---|
@@ -173,8 +285,8 @@ Magic raqamlar har xil — oltitasi bir vaqtda ishlay oladi.
 Timeframe **grafikdan** olinadi, parametrlar esa presetdan:
 
 ```
-mql5/Presets/ScalpKit_BTC_Trend_H4.set
-mql5/Presets/ScalpKit_XAU_Trend_D1.set   ... va h.k.
+mql5/Presets/ScalpKit_BTC_Trend_4H.set
+mql5/Presets/ScalpKit_XAU_Trend_1D.set   ... va h.k.
 ```
 
 1. EA ni kerakli TF grafigiga tashlang (masalan XAUUSD H4)
