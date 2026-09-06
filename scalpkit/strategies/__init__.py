@@ -5,10 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from .base import Strategy
+from .donchian_breakout import DonchianBreakout
 from .momentum_pullback import MomentumPullback
 
 REGISTRY: dict[str, type[Strategy]] = {
     MomentumPullback.name: MomentumPullback,
+    DonchianBreakout.name: DonchianBreakout,
 }
 
 
@@ -22,4 +24,5 @@ def available() -> list[str]:
     return sorted(REGISTRY)
 
 
-__all__ = ["Strategy", "MomentumPullback", "REGISTRY", "get_strategy", "available"]
+__all__ = ["Strategy", "MomentumPullback", "DonchianBreakout",
+           "REGISTRY", "get_strategy", "available"]

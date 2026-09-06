@@ -33,6 +33,7 @@ import pandas as pd
 from .config import Config
 from .costs import cost_table, edge_needed_report, fee_tier_comparison
 from .data import generate_synthetic, load_csv, save_csv
+from .data.loader import resample_ohlcv
 from .engine import run_backtest
 from .features import build_features, warmup_bars
 from .metrics import compute_metrics
@@ -48,6 +49,30 @@ DEFAULT_DATA = "data/BTCUSDT_5m.csv"
 
 
 # ---------------------------------------------------------------- yordamchilar
+TF_RULE = {"5m": "5min", "15m": "15min", "1h": "1h", "4h": "4h", "1d": "1D"}
+
+
+def _resample_if_needed(df: pd.DataFrame, cfg: Config) -> pd.DataFrame:
+    """Ma'lumotni profil timeframe'iga keltiradi.
+
+    Foydalanuvchida odatda M5 ma'lumot bo'ladi; H4 yoki D1 profilida
+    ishlash uchun uni qayta namunalash kerak. Agar ma'lumot allaqachon
+    kerakli timeframe'da bo'lsa — teginilmaydi.
+    """
+    target = cfg.timeframe
+    if target not in TF_RULE or len(df) < 3:
+        return df
+
+    step = df.index.to_series().diff().median()
+    want = pd.Timedelta(TF_RULE[target])
+    if step >= want * 0.9:
+        return df                       # allaqachon shu yoki undan katta TF
+
+    out = resample_ohlcv(df, TF_RULE[target])
+    print(f"  {len(df):,} bar -> {len(out):,} bar ({target} ga qayta namunalandi)")
+    return out
+
+
 def _load(args) -> pd.DataFrame:
     path = Path(args.data)
     if not path.exists():
@@ -62,7 +87,7 @@ def _load(args) -> pd.DataFrame:
     if getattr(args, "end", None):
         df = df.loc[: pd.Timestamp(args.end, tz="UTC")]
     print(f"  {len(df):,} bar yuklandi: {df.index[0]:%Y-%m-%d} → {df.index[-1]:%Y-%m-%d}")
-    return df
+    return _resample_if_needed(df, _config(args))
 
 
 def _config(args) -> Config:
@@ -71,13 +96,18 @@ def _config(args) -> Config:
     # Profil boshqa hamma narsadan OLDIN qo'llanadi, shunda buyruq
     # qatoridagi aniq qiymatlar uni bosib o'tadi.
     name = getattr(args, "profile", None)
+    wanted = getattr(args, "strategy", None)
     if name:
-        cfg = get_profile(name).apply(cfg)
+        prof = get_profile(name)
+        cfg = prof.apply(cfg, wanted)
+        cfg.timeframe = prof.timeframe
     elif getattr(args, "symbol", None):
-        cfg = profile_for_symbol(args.symbol).apply(cfg)
+        prof = profile_for_symbol(args.symbol)
+        cfg = prof.apply(cfg, wanted)
         cfg.symbol = args.symbol
+        cfg.timeframe = prof.timeframe
 
-    if getattr(args, "strategy", None):
+    if getattr(args, "strategy", None) and cfg.strategy.name != args.strategy:
         cfg.strategy.name = args.strategy
     if getattr(args, "equity", None):
         cfg.risk.initial_equity = args.equity
@@ -215,20 +245,23 @@ def cmd_signal(args) -> None:
 
 
 def cmd_profiles(args) -> None:
-    print("\n=== INSTRUMENT PROFILLARI ===\n")
-    print(compare_table())
-    print()
+    print("\n=== INSTRUMENT x TIMEFRAME PROFILLARI ===\n")
+    print(f"{'profil':<14}{'TF':>5}{'strategiya':>20}{'min ATR%':>11}"
+          f"{'stop%':>9}{'xarajat R':>11}{'seans':>7}")
+    print("-" * 78)
     for name in available_profiles():
         prof = get_profile(name)
-        print(f"{name.upper():<10} {prof.description}")
-        print(f"{'':<10} savdo vaqti : {prof.calendar.describe()}")
-        print(f"{'':<10} nomlari     : {', '.join(prof.symbols)}")
-        params = prof.strategy
-        stop = float(params['min_atr_pct']) * prof.typical_price * 1.4
-        print(f"{'':<10} eng past volatilitetda xarajat: "
-              f"{prof.typical_spread / stop:.3f} R "
-              f"(spread {prof.typical_spread:g}, stop {stop:.2f})")
-        print()
+        atr_min = float(prof.strategy["min_atr_pct"])
+        stop = atr_min * prof.typical_price * 1.5
+        session = "ha" if prof.strategy.get("use_session_filter", True) else "yo'q"
+        print(f"{name:<14}{prof.timeframe:>5}{prof.default_strategy:>20}"
+              f"{atr_min * 100:>10.4f}%{atr_min * 150:>8.3f}%"
+              f"{prof.typical_spread / stop:>11.3f}{session:>7}")
+    print()
+    print("Xarajat = eng past ruxsat etilgan volatilitetda; odatiy sharoitda kamroq.")
+    print("Yuqori timeframe'da xarajat keskin arzonlashadi — swing'ning asosiy afzalligi.")
+    print()
+    print(compare_table())
 
 
 def cmd_validate(args) -> None:

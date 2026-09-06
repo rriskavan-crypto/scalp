@@ -3,16 +3,37 @@
 **"M5 Momentum Pullback"** — 5 daqiqalik grafikda ishlaydigan
 tanlab-skalping strategiyasi, uni **halol tekshirish** vositalari bilan birga.
 
-Ikkita instrument qo'llab-quvvatlanadi, har biri **alohida kalibrlangan**:
+**2 instrument x 5 timeframe x 2 strategiya** — har bir kombinatsiya
+alohida kalibrlangan:
 
-| Profil | Instrument | M5 ATR% | Savdo vaqti | MQL5 EA |
-|---|---|---|---|---|
-| `btcusd` | Bitcoin | ~0.22 % | 24/7 | `ScalpKit_BTC_M5.mq5` |
-| `xauusd` | Oltin | ~0.07 % | Du–Ju, juma 19:00 UTC gacha | `ScalpKit_XAU_M5.mq5` |
+| Strategiya | Turi | Tavsiya etilgan TF | Maqsad |
+|---|---|---|---|
+| `momentum_pullback` | trend ichida qaytish | M5, M15 | TP1 1.5R + TP2 3R |
+| `donchian_breakout` | kanal buzilishi (swing) | M15, H1, H4, D1 | **yo'q** — dumni kesmaslik uchun |
+
+| Instrument | M5 ATR% | Savdo vaqti | MQL5 EA'lari |
+|---|---|---|---|
+| BTCUSD | ~0.22 % | 24/7 | `ScalpKit_BTC_Scalp.mq5`, `ScalpKit_BTC_Trend.mq5` |
+| XAUUSD | ~0.07 % | Du–Ju | `ScalpKit_XAU_Scalp.mq5`, `ScalpKit_XAU_Trend.mq5` |
 
 ```bash
-python -m scalpkit profiles     # farqlarni ko'rish
+python -m scalpkit profiles     # 12 ta profil va ular farqi
 ```
+
+### Nima uchun swing skalpingdan afzalroq
+
+Volatilitet √T bilan o'sadi, spread esa o'zgarmaydi — xarajat R birligida
+keskin arzonlashadi:
+
+| TF | BTC stop (1.5 ATR) | xarajat | M5 ga nisbatan |
+|---|---|---|---|
+| M5 | 0.33 % | 0.093 R | — |
+| H1 | 1.16 % | 0.026 R | 3.5x arzon |
+| H4 | 2.39 % | 0.013 R | 7.2x arzon |
+| D1 | 6.26 % | 0.005 R | **18.9x arzon** |
+
+M5 da ishlashi uchun 0.10R ustunlik kerak bo'lgan g'oya D1 da 0.01R bilan
+ham ishlaydi. Batafsil: **[docs/SWING_UZ.md](docs/SWING_UZ.md)**
 
 ---
 
@@ -261,7 +282,7 @@ Dvigatel matematikasi testlar bilan tasdiqlangan: nol xarajatda to'liq
 stop **aynan −1.000R** beradi.
 
 ```bash
-python -m pytest tests/ -q      # 133 test
+python -m pytest tests/ -q      # 169 test
 ```
 
 ---
@@ -274,7 +295,8 @@ scalpkit/
   indicators.py      EMA, RSI, ATR, ADX, Donchian, VWAP (barchasi sabab-oqibatli)
   features.py        indikator matritsasi + H1 moslash (kelajaksiz)
   strategies/
-    momentum_pullback.py   ASOSIY STRATEGIYA
+    momentum_pullback.py   skalping: trend ichida qaytish
+    donchian_breakout.py   swing: kanal buzilishi, maqsadsiz
   engine/
     backtest.py      bar-bar dvigatel, bracket orderlar, limit kirish
     broker.py        komissiya, sirpanish, funding
@@ -297,6 +319,7 @@ docs/
   RISK_UZ.md         risk boshqaruvi
   VALIDATION_UZ.md   tekshirish tartibi
   CHECKLIST_UZ.md    kundalik nazorat ro'yxati
+  SWING_UZ.md        M15/H1/H4/D1: xarajat afzalligi va trend strategiyasi
   GOLD_UZ.md         XAUUSD: nima uchun alohida kalibrlash kerak
   MT5_UZ.md          MetaTrader 5 / Exness qo'llanmasi
   MQL5_UZ.md         Expert Advisor: o'rnatish va Strategy Tester
@@ -304,8 +327,11 @@ mql5/
   Include/ScalpKit/
     Core.mqh         umumiy savdo mantig'i (ikkala EA uchun)
   Experts/
-    ScalpKit_BTC_M5.mq5   BTCUSD — generatsiya qilingan
-    ScalpKit_XAU_M5.mq5   XAUUSD — generatsiya qilingan
+    ScalpKit_BTC_Scalp.mq5   BTCUSD skalping (M5/M15)
+    ScalpKit_XAU_Scalp.mq5   XAUUSD skalping (M5/M15)
+    ScalpKit_BTC_Trend.mq5   BTCUSD swing (M15-D1)
+    ScalpKit_XAU_Trend.mq5   XAUUSD swing (M15-D1)
+  Presets/                   12 ta timeframe preseti (.set)
 tools/
   gen_mql5_experts.py     EA fayllarini profillardan generatsiya qiladi
 ```

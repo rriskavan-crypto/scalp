@@ -282,3 +282,48 @@ def test_gold_search_space_stays_inside_the_cost_budget():
     stop = float(strat.params["min_sl_atr"]) * 1.4 * lowest * XAUUSD.typical_price
     cost_r = XAUUSD.typical_spread / stop
     assert cost_r < 0.40, f"eng past qidiruv chegarasida xarajat {cost_r:.3f}R"
+
+
+def test_profile_picks_its_recommended_strategy():
+    """Swing timeframe'larida standart strategiya trendni kuzatish bo'lishi kerak.
+
+    Regressiya testi: `StrategyConfig.name` ning standart qiymati
+    ("momentum_pullback") har doim to'lgan bo'lgani uchun profilning
+    tavsiyasini jim ravishda bosib turardi — H4/D1 da skalping
+    strategiyasi ishlab, 2-8 ta savdo berardi.
+    """
+    from scalpkit.profiles import for_timeframe
+
+    for base in (BTCUSD, XAUUSD):
+        for tf in ("5m", "15m"):
+            cfg = for_timeframe(base, tf).apply(Config())
+            assert cfg.strategy.name == "momentum_pullback"
+        for tf in ("1h", "4h", "1d"):
+            cfg = for_timeframe(base, tf).apply(Config())
+            assert cfg.strategy.name == "donchian_breakout", f"{base.name}_{tf}"
+
+
+def test_explicit_strategy_overrides_the_profile_default():
+    from scalpkit.profiles import for_timeframe
+
+    cfg = for_timeframe(BTCUSD, "4h").apply(Config(), "momentum_pullback")
+    assert cfg.strategy.name == "momentum_pullback"
+
+
+def test_timeframe_scaling_matches_measured_volatility():
+    """Chegara har bir TF da barlarning taxminan 50-70 % ini o'tkazishi kerak.
+
+    Agar u qattiq kodlangan bo'lsa (masalan M5 qiymati D1 ga ko'chirilsa),
+    filtr ma'nosini yo'qotadi: hamma barni o'tkazadi yoki hech birini.
+    """
+    from scalpkit.data.loader import resample_ohlcv
+    from scalpkit.profiles import for_timeframe
+
+    rule = {"15m": "15min", "1h": "1h", "4h": "4h", "1d": "1D"}
+    raw = generate_synthetic(n_bars=120_000, asset="btc", seed=11)
+    for tf, freq in rule.items():
+        df = resample_ohlcv(raw, freq)
+        atr_pct = atr(df.high, df.low, df.close, 14) / df.close
+        threshold = for_timeframe(BTCUSD, tf).strategy["min_atr_pct"]
+        share = (atr_pct >= threshold).mean()
+        assert 0.35 < share < 0.85, f"{tf}: chegara barlarning {share:.0%} ini o'tkazyapti"

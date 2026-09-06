@@ -103,7 +103,12 @@ def run_backtest(
     max_sl_atr = float(p.get("max_sl_atr", 2.2))
     tp1_r = float(p.get("tp1_r", 1.5))
     tp1_fraction = float(p.get("tp1_fraction", 0.35))
+    # tp2_r <= 0 => TAKE-PROFIT YO'Q. Trend-following uchun bu qasddan:
+    # tizimning butun foydasi kam sonli katta yutuqlardan keladi, va
+    # maqsad qo'yish aynan o'sha savdolarni kesib tashlaydi.
     tp2_r = float(p.get("tp2_r", 3.5))
+    if tp2_r <= 0:
+        tp2_r = 1e9
     tp1_stop_to_r = float(p.get("tp1_stop_to_r", -0.35))
     be_after_tp1 = bool(p.get("be_after_tp1", False))
     be_trigger_r = float(p.get("be_trigger_r", 2.0))
@@ -131,6 +136,16 @@ def run_backtest(
         signals["entry_ref"].to_numpy(float)
         if "entry_ref" in signals.columns
         else np.full(len(idx), np.nan)
+    )
+    # Strategiya o'z chiqish signalini berishi mumkin (masalan Donchian
+    # kanalining teskari tomoni buzilishi). Bu TP/stopdan mustaqil ishlaydi.
+    exit_long_arr = (
+        signals["exit_long"].fillna(False).to_numpy(bool)
+        if "exit_long" in signals.columns else np.zeros(len(idx), dtype=bool)
+    )
+    exit_short_arr = (
+        signals["exit_short"].fillna(False).to_numpy(bool)
+        if "exit_short" in signals.columns else np.zeros(len(idx), dtype=bool)
     )
 
     # Hafta chegarasida pozitsiyani majburan yopish (oltin/forex uchun).
@@ -167,6 +182,7 @@ def run_backtest(
                 tp1_r, tp1_fraction, tp2_r, tp1_stop_to_r, be_after_tp1,
                 be_trigger_r, be_offset_r, trail_mult, trail_after_r,
                 time_stop, time_stop_min_r, exit_on_ema, bool(force_flat[i]),
+                bool(exit_long_arr[i - 1]), bool(exit_short_arr[i - 1]),
             )
             if closed_this_bar:
                 trade = _finalize(pos, bar_time, i, cost, equity)
@@ -369,7 +385,7 @@ def _manage_position(pos, i, op, hi, lo, cl, ema_fast, cost,
                      tp1_r, tp1_fraction, tp2_r, tp1_stop_to_r, be_after_tp1,
                      be_trigger_r, be_offset_r, trail_mult, trail_after_r,
                      time_stop, time_stop_min_r, exit_on_ema,
-                     force_flat) -> bool:
+                     force_flat, exit_long, exit_short) -> bool:
     """Bitta bar davomida ochiq pozitsiyani boshqaradi. True = pozitsiya yopildi.
 
     Chiqish tuzilmasi qasddan shunday qurilgan: **yutuqlar cheklanmaydi**.
@@ -448,6 +464,13 @@ def _manage_position(pos, i, op, hi, lo, cl, ema_fast, cost,
     # --- 7) Vaqt stopi: faqat hech qayoqqa ketmagan savdolar ---
     if i - pos.entry_i >= time_stop and move_r < time_stop_min_r:
         _close_all(pos, c, "time_stop", cost, is_stop=False)
+        return True
+
+    # --- 7b) Strategiyaning o'z chiqish signali ---
+    # Signal oldingi bar yopilishida hisoblanadi, ijro shu barning
+    # yopilishida — kelajakka qarash yo'q.
+    if (s > 0 and exit_long) or (s < 0 and exit_short):
+        _close_all(pos, c, "signal_exit", cost, is_stop=False)
         return True
 
     # --- 8) EMA21 dan chiqish (faqat TP1 dan keyin, foydani himoya qilish) ---

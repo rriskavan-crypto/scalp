@@ -56,16 +56,34 @@ class Profile:
     typical_price: float             # misollar uchun taxminiy narx
     contract_size: float             # 1 lot nechta birlik
     calendar: Calendar
+    timeframe: str = "5m"
+    # Bozorga oid parametrlar — barcha strategiyalar uchun umumiy
+    # (volatilitet oynasi, seans, kalendar).
     strategy: dict[str, Any] = field(default_factory=dict)
+    # Strategiyaga XOS qoplamalar. Bu ajratish zarur: `tp2_r = 3.0`
+    # momentum_pullback uchun to'g'ri, lekin donchian_breakout uchun
+    # halokatli — u maqsadsiz ishlashi kerak, aks holda trend-following
+    # foydasi keladigan dumni kesib tashlaydi.
+    strategy_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
     risk: dict[str, Any] = field(default_factory=dict)
     cost: dict[str, Any] = field(default_factory=dict)
+    default_strategy: str = "momentum_pullback"
 
-    def apply(self, cfg: Config) -> Config:
+    def apply(self, cfg: Config, strategy_name: str | None = None) -> Config:
         """Profilni konfiguratsiyaga qo'llaydi (nusxa qaytaradi)."""
         out = Config.from_dict(cfg.to_dict())
         out.symbol = self.symbols[0]
         out.days_per_year = self.calendar.days_per_year
-        out.strategy.params = {**cfg.strategy.params, **self.strategy}
+        # `strategy_name` berilmasa — profilning tavsiya etilgan strategiyasi.
+        # `cfg.strategy.name` ga tayanib bo'lmaydi: uning standart qiymati
+        # ("momentum_pullback") har doim to'lgan bo'ladi va profil
+        # tavsiyasini jim ravishda bosib turadi.
+        out.strategy.name = strategy_name or self.default_strategy
+        out.strategy.params = {
+            **cfg.strategy.params,
+            **self.strategy,
+            **self.strategy_overrides.get(out.strategy.name, {}),
+        }
         for key, value in self.risk.items():
             setattr(out.risk, key, value)
         for key, value in self.cost.items():
@@ -167,12 +185,15 @@ XAUUSD = Profile(
         "week_close_hour_utc": 19,
         "week_close_dow": 4,
         "week_open_skip_bars": 6,
-        # --- setup va chiqish: BTC bilan bir xil ---
-        # Ularni oltin uchun o'zgartirishga o'lchangan asos yo'q, shuning
-        # uchun asossiz farq kiritilmaydi.
-        "tp2_r": 3.0,                 # oltin trendlari BTC nikidan qisqaroq
-        "trail_atr_mult": 2.2,
-        "time_stop_bars": 18,         # 90 daqiqa
+    },
+    strategy_overrides={
+        # Chiqish parametrlari strategiyaga xos — ular umumiy blokda
+        # bo'lsa, boshqa strategiyaga noto'g'ri qo'llanadi.
+        "momentum_pullback": {
+            "tp2_r": 3.0,             # oltin trendlari BTC nikidan qisqaroq
+            "trail_atr_mult": 2.2,
+            "time_stop_bars": 18,     # 90 daqiqa
+        },
     },
     risk={
         # Stop chegaralari ham 3+ barobar torroq — aks holda majburiy
@@ -195,11 +216,112 @@ XAUUSD = Profile(
         "slippage_bps": 0.3,          # ~$0.08
         "stop_slippage_bps": 0.8,     # ~$0.21
         "apply_funding": False,       # oltinda funding emas, swap bor
+        # SWAP — swing uchun hal qiluvchi. Long pozitsiya USD foiz stavkasini
+        # to'laydi (~4.5 %/yil), short esa oz miqdorda oladi. 30 kunlik long
+        # pozitsiya ~0.28R turadi; skalpingda sezilmaydi, D1 da esa yo'q.
+        # BROKERINGIZNING HAQIQIY SWAP QIYMATINI TEKSHIRING — u keskin farq qiladi.
+        "apply_swap": True,
+        "swap_pct_per_day_long": 0.00012,    # -0.012 %/kun
+        "swap_pct_per_day_short": -0.00004,  # +0.004 %/kun (daromad)
     },
 )
 
 
-PROFILES: dict[str, Profile] = {p.name: p for p in (BTCUSD, XAUUSD)}
+# ---------------------------------------------------------------------------
+#  TIMEFRAME BO'YICHA KENGAYTIRISH
+# ---------------------------------------------------------------------------
+# Volatilitet timeframe bilan taxminan sqrt(T) qonuni bo'yicha o'sadi, spread
+# esa o'zgarmaydi. Natijada yuqori timeframe'da xarajat R birligida keskin
+# arzonlashadi — swing'ning skalpingdan asosiy tuzilmaviy afzalligi:
+#
+#   BTCUSD, stop = 1.5 ATR, spread $20 @ $65 000
+#     M5  ATR% 0.220 %  -> xarajat 0.093 R
+#     H1  ATR% 0.776 %  -> xarajat 0.026 R   (3.5x arzon)
+#     D1  ATR% 4.173 %  -> xarajat 0.005 R  (18.9x arzon)
+#
+# Ko'paytiruvchilar sintetik ma'lumotda o'lchangan; nazariy sqrt(T) ga
+# yaqin, lekin yuqori TF'da biroz undan katta (narx harakati sof tasodifiy
+# emas — kunlik gorizontda davomiylik bor).
+TF_M5_BARS: dict[str, int] = {"5m": 1, "15m": 3, "1h": 12, "4h": 48, "1d": 288}
+TF_ATR_SCALE: dict[str, float] = {"5m": 1.0, "15m": 1.73, "1h": 3.5, "4h": 7.2, "1d": 18.9}
+
+# Yuqori timeframe'da ba'zi qoidalar ma'nosini yo'qotadi:
+#   * seans filtri — H4 bari bir necha seansni qamrab oladi;
+#   * hafta chegarasi — D1 da pozitsiyasiz qolish imkonsiz, swing savdosi
+#     hafta oxiri gapini qabul qiladi (uning o'rniga stop kengroq).
+TF_SESSION_FILTER: dict[str, bool] = {"5m": True, "15m": True, "1h": True,
+                                      "4h": False, "1d": False}
+TF_WEEKEND_FLAT: dict[str, bool] = {"5m": True, "15m": True, "1h": True,
+                                    "4h": False, "1d": False}
+# Tanaffuslar bar hisobida — yuqori TF'da bir bar ancha uzoq vaqt
+TF_COOLDOWN: dict[str, tuple[int, int]] = {
+    "5m": (6, 24), "15m": (4, 16), "1h": (3, 8), "4h": (2, 4), "1d": (1, 2),
+}
+
+
+def for_timeframe(base: Profile, timeframe: str) -> Profile:
+    """Profilni boshqa timeframe'ga moslaydi.
+
+    Volatilitetga bog'liq barcha chegaralar o'lchangan ko'paytiruvchi
+    bilan masshtablanadi. Qattiq kodlangan qiymatlarni ko'chirish
+    xato bo'lardi: M5 uchun `min_atr_pct = 0.20 %` D1 da barcha
+    barlarni o'tkazib yuboradi (D1 ATR% mediani 4.17 %), ya'ni filtr
+    umuman ishlamay qoladi.
+    """
+    if timeframe not in TF_ATR_SCALE:
+        raise KeyError(f"Noma'lum timeframe '{timeframe}'. Mavjud: {sorted(TF_ATR_SCALE)}")
+    scale = TF_ATR_SCALE[timeframe] / TF_ATR_SCALE[base.timeframe]
+
+    strategy = dict(base.strategy)
+    for key in ("min_atr_pct", "max_atr_pct"):
+        if key in strategy:
+            strategy[key] = round(float(strategy[key]) * scale, 8)
+    strategy["use_session_filter"] = (
+        strategy.get("use_session_filter", True) and TF_SESSION_FILTER[timeframe]
+    )
+    strategy["weekend_flat"] = (
+        strategy.get("weekend_flat", False) and TF_WEEKEND_FLAT[timeframe]
+    )
+
+    risk = dict(base.risk)
+    for key in ("min_stop_pct", "max_stop_pct"):
+        if key in risk:
+            risk[key] = round(float(risk[key]) * scale, 8)
+    cooldown, streak = TF_COOLDOWN[timeframe]
+    risk["cooldown_bars_after_loss"] = cooldown
+    risk["cooldown_bars_after_streak"] = streak
+
+    bars_per_day = 288 / TF_M5_BARS[timeframe]
+    risk["max_trades_per_day"] = max(1, int(round(base.risk.get(
+        "max_trades_per_day", 8) * bars_per_day / 288)))
+
+    # Yuqori timeframe'da vaqt stopi bar hisobida qayta o'lchanadi:
+    # M5 da 18 bar = 90 daqiqa, D1 da 18 bar = 18 kun (swing uchun to'g'ri).
+    overrides = {k: dict(v) for k, v in base.strategy_overrides.items()}
+
+    # Swing timeframe'larida standart strategiya — trendni kuzatish.
+    # M5/M15 da esa tanlab-skalping.
+    default_strategy = ("donchian_breakout" if timeframe in ("1h", "4h", "1d")
+                        else base.default_strategy)
+
+    return Profile(
+        name=f"{base.name}_{timeframe}", symbols=base.symbols,
+        description=f"{base.description} ({timeframe})",
+        timeframe=timeframe, typical_spread=base.typical_spread,
+        typical_price=base.typical_price, contract_size=base.contract_size,
+        calendar=base.calendar, strategy=strategy, strategy_overrides=overrides,
+        risk=risk, cost=dict(base.cost), default_strategy=default_strategy,
+    )
+
+
+_BASES = (BTCUSD, XAUUSD)
+TIMEFRAMES: tuple[str, ...] = ("5m", "15m", "1h", "4h", "1d")
+
+PROFILES: dict[str, Profile] = {p.name: p for p in _BASES}
+for _base in _BASES:
+    for _tf in TIMEFRAMES:
+        _p = for_timeframe(_base, _tf)
+        PROFILES[_p.name] = _p
 
 
 def get_profile(name: str) -> Profile:

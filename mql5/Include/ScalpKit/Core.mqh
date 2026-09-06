@@ -72,6 +72,19 @@ struct ScalpKitConfig
    double   HalveRiskDD;           // Shu drawdownda risk yarmiga
    //--- === Xarajat himoyasi ===
    double   MaxCostR;              // Xarajat shundan oshsa savdo yo'q
+   //--- === Yo'nalish ===
+   bool     AllowLong;             // Long savdolarga ruxsat
+   bool     AllowShort;            // Short savdolarga ruxsat
+   //--- === Strategiya ===
+   int      StrategyKind;          // 0 = momentum_pullback, 1 = donchian_breakout
+   int      ExpectedTimeframe;     // preset qaysi TF uchun (PERIOD_CURRENT = tekshirmaslik)
+   //--- === Donchian (trendni kuzatish) ===
+   int      TrendLen;              // uzoq muddatli EMA
+   bool     RequireTrendFilter;    // narx EMA ning to'g'ri tomonidami
+   int      EntryLen;              // kirish kanali (bar)
+   int      ExitLen;               // chiqish kanali (bar)
+   int      CooldownLen;           // buzilishlar orasidagi eng kam masofa
+   double   SlAtrMult;             // stop masofasi (ATR)
    //--- === Hafta chegarasi (oltin/forex uchun) ===
    bool     WeekendFlat;           // Hafta oxiriga pozitsiyasiz kirish
    int      WeekCloseHourUTC;      // Juma shu soatdan keyin yangi savdo yo'q
@@ -102,8 +115,11 @@ CTrade   Trade;
 
 int      hEmaFast = INVALID_HANDLE, hEmaMid = INVALID_HANDLE, hEmaSlow = INVALID_HANDLE;
 int      hAtr = INVALID_HANDLE, hRsi = INVALID_HANDLE, hAdx = INVALID_HANDLE;
-int      hHtfEma = INVALID_HANDLE;
+int      hHtfEma = INVALID_HANDLE, hTrendEma = INVALID_HANDLE;
 
+ENUM_TIMEFRAMES g_tf = PERIOD_M5;   // grafik timeframe'i, OnInit da o'rnatiladi
+bool     g_exitLong = false;        // strategiyaning chiqish signali (bar bo'yicha)
+bool     g_exitShort = false;
 datetime g_lastBarTime = 0;
 int      g_barsSinceGap = 9999;   // hafta/bayram uzilishidan keyingi barlar
 int      g_serverUtcOffset = 0;
@@ -207,20 +223,32 @@ void Log(const string message)
 //==================================================================
 int ScalpKit_OnInit()
 {
-   if(Period() != PERIOD_M5)
-      Print("OGOHLANTIRISH: EA M5 uchun mo'ljallangan, joriy TF = ", EnumToString(Period()));
+   // Timeframe grafikdan olinadi. Parametrlar timeframe'ga bog'liq
+   // kalibrlangani uchun mos preset yuklanganini tekshiramiz.
+   if(g_cfg.ExpectedTimeframe != PERIOD_CURRENT && Period() != g_cfg.ExpectedTimeframe)
+   {
+      PrintFormat("XATO: bu preset %s uchun, grafik esa %s. "
+                  "Volatilitet chegaralari timeframe'ga bog'liq — mos presetni yuklang "
+                  "yoki InpExpectedTimeframe ni PERIOD_CURRENT qiling.",
+                  EnumToString((ENUM_TIMEFRAMES)g_cfg.ExpectedTimeframe),
+                  EnumToString(Period()));
+      return INIT_PARAMETERS_INCORRECT;
+   }
+   g_tf = Period();
 
-   hEmaFast = iMA(_Symbol, PERIOD_M5, g_cfg.EmaFast, 0, MODE_EMA, PRICE_CLOSE);
-   hEmaMid  = iMA(_Symbol, PERIOD_M5, g_cfg.EmaMid,  0, MODE_EMA, PRICE_CLOSE);
-   hEmaSlow = iMA(_Symbol, PERIOD_M5, g_cfg.EmaSlow, 0, MODE_EMA, PRICE_CLOSE);
-   hAtr     = iATR(_Symbol, PERIOD_M5, g_cfg.AtrLen);
-   hRsi     = iRSI(_Symbol, PERIOD_M5, g_cfg.RsiLen, PRICE_CLOSE);
-   hAdx     = iADX(_Symbol, PERIOD_M5, g_cfg.AdxLen);
+   hEmaFast = iMA(_Symbol, g_tf, g_cfg.EmaFast, 0, MODE_EMA, PRICE_CLOSE);
+   hEmaMid  = iMA(_Symbol, g_tf, g_cfg.EmaMid,  0, MODE_EMA, PRICE_CLOSE);
+   hEmaSlow = iMA(_Symbol, g_tf, g_cfg.EmaSlow, 0, MODE_EMA, PRICE_CLOSE);
+   hAtr     = iATR(_Symbol, g_tf, g_cfg.AtrLen);
+   hRsi     = iRSI(_Symbol, g_tf, g_cfg.RsiLen, PRICE_CLOSE);
+   hAdx     = iADX(_Symbol, g_tf, g_cfg.AdxLen);
    hHtfEma  = iMA(_Symbol, PERIOD_H1, g_cfg.HtfEma, 0, MODE_EMA, PRICE_CLOSE);
+   hTrendEma = iMA(_Symbol, g_tf, g_cfg.TrendLen, 0, MODE_EMA, PRICE_CLOSE);
 
    if(hEmaFast == INVALID_HANDLE || hEmaMid == INVALID_HANDLE ||
       hEmaSlow == INVALID_HANDLE || hAtr == INVALID_HANDLE ||
-      hRsi == INVALID_HANDLE || hAdx == INVALID_HANDLE || hHtfEma == INVALID_HANDLE)
+      hRsi == INVALID_HANDLE || hAdx == INVALID_HANDLE ||
+      hHtfEma == INVALID_HANDLE || hTrendEma == INVALID_HANDLE)
    {
       Print("XATO: indikator handle yaratilmadi. Kod: ", GetLastError());
       return INIT_FAILED;
@@ -256,6 +284,7 @@ void ScalpKit_OnDeinit(const int reason)
    IndicatorRelease(hRsi);
    IndicatorRelease(hAdx);
    IndicatorRelease(hHtfEma);
+   IndicatorRelease(hTrendEma);
 }
 
 //------------------------------------------------------------------
@@ -416,6 +445,8 @@ struct SignalResult
    double stopPrice;     // strukturaviy stop
    double entryRef;      // limit kirish darajasi
    double atr;
+   bool   exitLong;      // strategiyaning o'z chiqish signali (Donchian kanali)
+   bool   exitShort;
    string reject;        // qaysi shart bajarilmadi (log uchun)
 };
 
@@ -442,17 +473,145 @@ double VolZAt(const long &tv[], const int i, const int len)
    return ((double)tv[i] - mean) / sd;
 }
 
-SignalResult BuildSignal()
+//------------------------------------------------------------------
+//  DONCHIAN BREAKOUT — swing / trendni kuzatish
+//
+//  Python dagi `donchian_breakout` bilan bir xil. Asosiy farqi
+//  momentum_pullback dan: MAQSAD QO'YILMAYDI. Trend-following foydasi
+//  kam sonli juda katta yutuqlardan keladi; 3R da maqsad qo'yish
+//  aynan o'sha savdolarni kesib tashlaydi.
+//------------------------------------------------------------------
+SignalResult BuildSignalDonchian()
 {
    SignalResult out;
-   out.side = 0; out.stopPrice = 0.0; out.entryRef = 0.0; out.atr = 0.0; out.reject = "";
+   out.side = 0; out.stopPrice = 0.0; out.entryRef = 0.0; out.atr = 0.0;
+   out.exitLong = false; out.exitShort = false; out.reject = "";
+
+   const int needBars = g_cfg.EntryLen + g_cfg.CooldownLen + g_cfg.TrendLen + 10;
+
+   MqlRates rates[];
+   ArraySetAsSeries(rates, true);
+   if(CopyRates(_Symbol, g_tf, 0, needBars, rates) < needBars)
+   {
+      out.reject = "barlar yetarli emas";
+      return out;
+   }
+
+   double atr[], trend[];
+   if(!CopyMany(hAtr, 0, 0, needBars, atr) || !CopyMany(hTrendEma, 0, 0, needBars, trend))
+   {
+      out.reject = "indikator ma'lumoti yo'q";
+      return out;
+   }
+
+   const int S = 1;                      // oxirgi yopilgan bar
+   const double a = atr[S], cl = rates[S].close;
+   if(a <= 0.0 || cl <= 0.0)
+   {
+      out.reject = "ATR yoki narx noto'g'ri";
+      return out;
+   }
+   out.atr = a;
+
+   //---- kanallar: joriy bar kanalni O'ZGARTIRMASLIGI kerak ----
+   double upCh = -DBL_MAX, dnCh = DBL_MAX, exUp = -DBL_MAX, exDn = DBL_MAX;
+   for(int i = S + 1; i <= S + g_cfg.EntryLen; i++)
+   {
+      upCh = MathMax(upCh, rates[i].high);
+      dnCh = MathMin(dnCh, rates[i].low);
+   }
+   for(int i = S + 1; i <= S + g_cfg.ExitLen; i++)
+   {
+      exUp = MathMax(exUp, rates[i].high);
+      exDn = MathMin(exDn, rates[i].low);
+   }
+
+   //---- chiqish signali (pozitsiya ochiq bo'lsa dvigatel ishlatadi) ----
+   out.exitLong  = (cl < exDn);
+   out.exitShort = (cl > exUp);
+
+   //---- rejim ----
+   double atrPct = a / cl;
+   if(atrPct < g_cfg.MinAtrPct || atrPct > g_cfg.MaxAtrPct)
+   {
+      out.reject = StringFormat("ATR%% oynadan tashqarida (%.4f%%)", atrPct * 100.0);
+      return out;
+   }
+   if(IsPastWeekCutoff(rates[S].time))
+   {
+      out.reject = "hafta chegarasi";
+      return out;
+   }
+   if(g_cfg.UseSession)
+   {
+      int h = UtcHourOf(rates[S].time);
+      bool inSession = (g_cfg.SessionStartUTC <= g_cfg.SessionEndUTC)
+                     ? (h >= g_cfg.SessionStartUTC && h < g_cfg.SessionEndUTC)
+                     : (h >= g_cfg.SessionStartUTC || h < g_cfg.SessionEndUTC);
+      if(!inSession)
+      {
+         out.reject = "seansdan tashqarida";
+         return out;
+      }
+   }
+
+   bool trendUp = true, trendDn = true;
+   if(g_cfg.RequireTrendFilter)
+   {
+      trendUp = (cl > trend[S]);
+      trendDn = (cl < trend[S]);
+   }
+
+   //---- buzilish ----
+   bool brokeUp = (cl > upCh);
+   bool brokeDn = (cl < dnCh);
+
+   //---- takroriy buzilishga to'siq ----
+   // Yon harakatda narx kanalni ketma-ket buzib, har safar zarar keltiradi.
+   if(g_cfg.CooldownLen > 0 && (brokeUp || brokeDn))
+   {
+      for(int i = S + 1; i <= S + g_cfg.CooldownLen; i++)
+      {
+         double hi = -DBL_MAX, lo = DBL_MAX;
+         for(int k = i + 1; k <= i + g_cfg.EntryLen; k++)
+         {
+            hi = MathMax(hi, rates[k].high);
+            lo = MathMin(lo, rates[k].low);
+         }
+         if(rates[i].close > hi) brokeUp = false;
+         if(rates[i].close < lo) brokeDn = false;
+      }
+   }
+
+   bool longSig  = trendUp && brokeUp  && g_cfg.AllowLong;
+   bool shortSig = trendDn && brokeDn && g_cfg.AllowShort;
+   if(longSig == shortSig)
+   {
+      if(!longSig)
+         out.reject = "buzilish yo'q";
+      return out;
+   }
+
+   int side = longSig ? 1 : -1;
+   out.side      = side;
+   out.stopPrice = cl - side * g_cfg.SlAtrMult * a;
+   out.entryRef  = cl;
+   return out;
+}
+
+
+SignalResult BuildSignalPullback()
+{
+   SignalResult out;
+   out.side = 0; out.stopPrice = 0.0; out.entryRef = 0.0; out.atr = 0.0;
+   out.exitLong = false; out.exitShort = false; out.reject = "";
 
    const int needBars = MathMax(g_cfg.DonchianLen + g_cfg.ImpulseLookback + 5,
                        MathMax(g_cfg.VolZLen + g_cfg.ImpulseLookback + 5, 70));
 
    MqlRates rates[];
    ArraySetAsSeries(rates, true);
-   if(CopyRates(_Symbol, PERIOD_M5, 0, needBars, rates) < needBars)
+   if(CopyRates(_Symbol, g_tf, 0, needBars, rates) < needBars)
    {
       out.reject = "barlar yetarli emas";
       return out;
@@ -472,7 +631,7 @@ SignalResult BuildSignal()
 
    long tv[];
    ArraySetAsSeries(tv, true);
-   if(CopyTickVolume(_Symbol, PERIOD_M5, 0, needBars, tv) < needBars)
+   if(CopyTickVolume(_Symbol, g_tf, 0, needBars, tv) < needBars)
    {
       out.reject = "hajm ma'lumoti yo'q";
       return out;
@@ -606,8 +765,8 @@ SignalResult BuildSignal()
               && (volZ >= g_cfg.TriggerVolZ)
               && (rates[S].close >= emaF[S] - g_cfg.MaxExtensionAtr * a);
 
-   bool longSig  = trendUp && hadImpulseUp && touchedUp && rsiDip && trigUp;
-   bool shortSig = trendDn && hadImpulseDn && touchedDn && rsiPop && trigDn;
+   bool longSig  = trendUp && hadImpulseUp && touchedUp && rsiDip && trigUp && g_cfg.AllowLong;
+   bool shortSig = trendDn && hadImpulseDn && touchedDn && rsiPop && trigDn && g_cfg.AllowShort;
 
    if(longSig == shortSig)     // ikkalasi ham yoki hech biri
    {
@@ -632,6 +791,16 @@ SignalResult BuildSignal()
    out.stopPrice = swing - side * g_cfg.SlBufferAtr * a;
    out.entryRef  = rates[S].close - side * g_cfg.EntryOffsetAtr * a;
    return out;
+}
+
+//------------------------------------------------------------------
+//  Strategiya tanlovchisi
+//------------------------------------------------------------------
+SignalResult BuildSignal()
+{
+   if(g_cfg.StrategyKind == 1)
+      return BuildSignalDonchian();
+   return BuildSignalPullback();
 }
 
 //==================================================================
@@ -864,7 +1033,7 @@ void ExpirePendingOrders()
          continue;
 
       datetime placed = (datetime)OrderGetInteger(ORDER_TIME_SETUP);
-      int barsOld = (int)((TimeCurrent() - placed) / (PeriodSeconds(PERIOD_M5)));
+      int barsOld = (int)((TimeCurrent() - placed) / (PeriodSeconds(g_tf)));
       if(barsOld >= g_cfg.EntryLimitBars)
       {
          if(Trade.OrderDelete(ticket))
@@ -991,7 +1160,7 @@ void TryOpen(const SignalResult &sig)
    ulong ticket = 0;
    if(g_cfg.UseLimitEntry)
    {
-      datetime expiry = TimeCurrent() + g_cfg.EntryLimitBars * PeriodSeconds(PERIOD_M5);
+      datetime expiry = TimeCurrent() + g_cfg.EntryLimitBars * PeriodSeconds(g_tf);
       ok = (sig.side > 0)
          ? Trade.BuyLimit(lots, entry, _Symbol, sl, tp, ORDER_TIME_SPECIFIED, expiry, "scalpkit")
          : Trade.SellLimit(lots, entry, _Symbol, sl, tp, ORDER_TIME_SPECIFIED, expiry, "scalpkit");
@@ -1164,7 +1333,7 @@ void ManagePositions()
 
       //--- vaqt stopi: faqat hech qayoqqa ketmagan savdolar
       datetime openTime = (datetime)PositionGetInteger(POSITION_TIME);
-      int barsHeld = (int)((TimeCurrent() - openTime) / PeriodSeconds(PERIOD_M5));
+      int barsHeld = (int)((TimeCurrent() - openTime) / PeriodSeconds(g_tf));
       if(barsHeld >= g_cfg.TimeStopBars && moveR < g_cfg.TimeStopMinR)
       {
          if(Trade.PositionClose(ticket))
@@ -1175,13 +1344,24 @@ void ManagePositions()
          }
       }
 
+      //--- strategiyaning o'z chiqish signali (Donchian kanali)
+      if((side > 0 && g_exitLong) || (side < 0 && g_exitShort))
+      {
+         if(Trade.PositionClose(ticket))
+         {
+            Log(StringFormat("#%I64u strategiya chiqish signali (%+.2fR) — yopildi.",
+                             ticket, nowR));
+            continue;
+         }
+      }
+
       //--- TP1 dan keyin EMA21 chiqishi
       if(g_cfg.ExitOnEmaCross && g_states[i].tp1Done)
       {
          double emaF = 0.0;
          if(CopyOne(hEmaFast, 0, 1, emaF))
          {
-            double closeBar = iClose(_Symbol, PERIOD_M5, 1);
+            double closeBar = iClose(_Symbol, g_tf, 1);
             if((side > 0 && closeBar < emaF) || (side < 0 && closeBar > emaF))
             {
                if(Trade.PositionClose(ticket))
@@ -1201,7 +1381,7 @@ void ManagePositions()
 //==================================================================
 bool IsNewBar()
 {
-   datetime t = iTime(_Symbol, PERIOD_M5, 0);
+   datetime t = iTime(_Symbol, g_tf, 0);
    if(t == 0 || t == g_lastBarTime)
       return false;
    g_lastBarTime = t;
@@ -1241,10 +1421,10 @@ void ScalpKit_OnTick()
       return;
 
    g_barCounter++;
-   UpdateWeekGapCounter(iTime(_Symbol, PERIOD_M5, 0), iTime(_Symbol, PERIOD_M5, 1));
+   UpdateWeekGapCounter(iTime(_Symbol, g_tf, 0), iTime(_Symbol, g_tf, 1));
    SyncClosedTrades();
    ExpirePendingOrders();
-   RollDay(iTime(_Symbol, PERIOD_M5, 1));
+   RollDay(iTime(_Symbol, g_tf, 1));
 
    // Hafta chegarasi: kutayotgan orderlarni bekor qilib, pozitsiyani yopamiz.
    // Bu KIRISH nuqtasida tekshiriladi — signal juma 18:55 da ruxsat etilgan
@@ -1257,24 +1437,30 @@ void ScalpKit_OnTick()
       return;
    }
 
+   // Signalni bir marta hisoblab, chiqish bayroqlarini yangilaymiz —
+   // ular ochiq pozitsiyani boshqarishda ishlatiladi.
+   SignalResult bar = BuildSignal();
+   g_exitLong  = bar.exitLong;
+   g_exitShort = bar.exitShort;
+
    if(HasOpenExposure())
+   {
+      ManagePositions();      // yangi chiqish bayrog'ini darhol qo'llaymiz
       return;
+   }
 
    string blocked = RiskBlockReason();
    if(blocked != "")
    {
-      // Signal bo'lsagina xabar beramiz — log'ni to'ldirmaslik uchun
-      SignalResult peek = BuildSignal();
-      if(peek.side != 0)
+      if(bar.side != 0)
          Log("SIGNAL BOR, lekin bloklangan: " + blocked);
       return;
    }
 
-   SignalResult sig = BuildSignal();
-   if(sig.side == 0)
+   if(bar.side == 0)
       return;
 
-   TryOpen(sig);
+   TryOpen(bar);
 }
 
 //==================================================================

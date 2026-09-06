@@ -20,16 +20,31 @@ import pytest
 
 from scalpkit.config import Config
 from scalpkit.features import DEFAULT_FEATURE_PARAMS
-from scalpkit.profiles import BTCUSD, XAUUSD
+from scalpkit.profiles import BTCUSD, XAUUSD, for_timeframe
 from scalpkit.strategies import get_strategy
 
 ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / "mql5" / "Include" / "ScalpKit" / "Core.mqh"
 EXPERTS = ROOT / "mql5" / "Experts"
 
+# nom -> (bazaviy profil, timeframe, strategiya, EA fayli)
 EA_FOR_PROFILE = {
-    "btcusd": (BTCUSD, EXPERTS / "ScalpKit_BTC_M5.mq5"),
-    "xauusd": (XAUUSD, EXPERTS / "ScalpKit_XAU_M5.mq5"),
+    "btc_scalp": (BTCUSD, "5m", "momentum_pullback", EXPERTS / "ScalpKit_BTC_Scalp.mq5"),
+    "xau_scalp": (XAUUSD, "5m", "momentum_pullback", EXPERTS / "ScalpKit_XAU_Scalp.mq5"),
+    "btc_trend": (BTCUSD, "4h", "donchian_breakout", EXPERTS / "ScalpKit_BTC_Trend.mq5"),
+    "xau_trend": (XAUUSD, "4h", "donchian_breakout", EXPERTS / "ScalpKit_XAU_Trend.mq5"),
+}
+
+# Har bir strategiya faqat o'ziga tegishli parametrlar bo'yicha tekshiriladi
+PULLBACK_ONLY = {
+    "InpImpulseLookback", "InpImpulseBodyAtr", "InpImpulseVolZ",
+    "InpPullbackLookback", "InpTouchAtr", "InpRsiPullbackLong",
+    "InpRsiPullbackShort", "InpTriggerVolZ", "InpTriggerClosePos",
+    "InpMaxExtensionAtr", "InpAdxMin", "InpRequireHTF", "InpSlBufferAtr",
+}
+DONCHIAN_ONLY = {
+    "InpTrendLen", "InpRequireTrendFilter", "InpEntryLen", "InpExitLen",
+    "InpCooldownLen", "InpSlAtrMult",
 }
 
 STRATEGY_MAP = {
@@ -75,10 +90,24 @@ RISK_MAP = {
 def read_inputs(path: Path) -> dict[str, object]:
     assert path.exists(), f"EA fayli topilmadi: {path}"
     out: dict[str, object] = {}
-    for m in re.finditer(r"^input\s+\w+\s+(\w+)\s*=\s*([^;]+);", path.read_text("utf-8"), re.M):
+    for m in re.finditer(r"^input\s+\S+\s+(\w+)\s*=\s*([^;]+);", path.read_text("utf-8"), re.M):
         raw = m.group(2).strip()
-        out[m.group(1)] = (raw == "true") if raw in ("true", "false") else float(raw)
+        if raw in ("true", "false"):
+            out[m.group(1)] = (raw == "true")
+            continue
+        try:
+            out[m.group(1)] = float(raw)
+        except ValueError:
+            out[m.group(1)] = raw          # ENUM_TIMEFRAMES kabi belgili qiymatlar
     return out
+
+
+def expected(profile_name: str):
+    base, tf, strategy_name, path = EA_FOR_PROFILE[profile_name]
+    profile = for_timeframe(base, tf)
+    cfg = profile.apply(Config(), strategy_name)
+    params = get_strategy(strategy_name, cfg.strategy.params).params
+    return profile, strategy_name, params, cfg, read_inputs(path)
 
 
 def same(ea_value, py_value, name: str) -> None:
@@ -91,38 +120,61 @@ def same(ea_value, py_value, name: str) -> None:
 
 @pytest.mark.parametrize("profile_name", sorted(EA_FOR_PROFILE))
 def test_strategy_parameters_match(profile_name):
-    profile, path = EA_FOR_PROFILE[profile_name]
-    inputs = read_inputs(path)
-    cfg = profile.apply(Config())
-    params = get_strategy(cfg.strategy.name, cfg.strategy.params).params
+    _, strategy_name, params, _, inputs = expected(profile_name)
+    skip = DONCHIAN_ONLY if strategy_name == "momentum_pullback" else PULLBACK_ONLY
     for ea_name, py_key in STRATEGY_MAP.items():
-        assert ea_name in inputs, f"{ea_name} {path.name} da yo'q"
+        if ea_name in skip:
+            continue
+        assert ea_name in inputs, f"{ea_name} EA da yo'q"
         same(inputs[ea_name], params[py_key], f"{profile_name}/{ea_name}")
 
 
 @pytest.mark.parametrize("profile_name", sorted(EA_FOR_PROFILE))
 def test_risk_parameters_match(profile_name):
-    profile, path = EA_FOR_PROFILE[profile_name]
-    inputs = read_inputs(path)
-    risk = profile.apply(Config()).risk
+    _, _, _, cfg, inputs = expected(profile_name)
     for ea_name, py_key in RISK_MAP.items():
-        same(inputs[ea_name], getattr(risk, py_key), f"{profile_name}/{ea_name}")
+        same(inputs[ea_name], getattr(cfg.risk, py_key), f"{profile_name}/{ea_name}")
 
 
 @pytest.mark.parametrize("profile_name", sorted(EA_FOR_PROFILE))
 def test_indicator_lengths_match(profile_name):
-    _, path = EA_FOR_PROFILE[profile_name]
-    inputs = read_inputs(path)
+    inputs = expected(profile_name)[4]
     for ea_name, py_key in FEATURE_MAP.items():
         same(inputs[ea_name], DEFAULT_FEATURE_PARAMS[py_key], f"{profile_name}/{ea_name}")
 
 
 @pytest.mark.parametrize("profile_name", sorted(EA_FOR_PROFILE))
 def test_limit_entry_matches_entry_mode(profile_name):
-    profile, path = EA_FOR_PROFILE[profile_name]
-    cfg = profile.apply(Config())
-    params = get_strategy(cfg.strategy.name, cfg.strategy.params).params
-    assert read_inputs(path)["InpUseLimitEntry"] is (params["entry_mode"] == "limit")
+    _, _, params, _, inputs = expected(profile_name)
+    assert inputs["InpUseLimitEntry"] is (params["entry_mode"] == "limit")
+
+
+@pytest.mark.parametrize("profile_name", sorted(EA_FOR_PROFILE))
+def test_strategy_kind_matches_the_expert(profile_name):
+    _, strategy_name, _, _, inputs = expected(profile_name)
+    assert inputs["InpStrategyKind"] == (1 if strategy_name == "donchian_breakout" else 0)
+
+
+def test_trend_experts_have_no_profit_target():
+    """Trend-following foydasi dumdan keladi — maqsad uni kesib tashlaydi.
+
+    Bu eng oson buziladigan dizayn qarori: profilning `tp2_r = 3.0`
+    qiymati Donchian'ga sizib o'tsa, strategiya jim ravishda buziladi.
+    """
+    for name in ("btc_trend", "xau_trend"):
+        inputs = expected(name)[4]
+        assert inputs["InpTp2R"] == 0.0, f"{name}: maqsad qo'yilgan!"
+        assert inputs["InpTp1Fraction"] == 0.0, f"{name}: qisman olish qo'yilgan!"
+    for name in ("btc_scalp", "xau_scalp"):
+        assert expected(name)[4]["InpTp2R"] > 0.0
+
+
+def test_experts_declare_their_timeframe():
+    """Parametrlar TF'ga bog'liq kalibrlangan — noto'g'ri grafikda ishlamasin."""
+    for name, (_, tf, _, _) in EA_FOR_PROFILE.items():
+        want = {"5m": "PERIOD_M5", "15m": "PERIOD_M15", "1h": "PERIOD_H1",
+                "4h": "PERIOD_H4", "1d": "PERIOD_D1"}[tf]
+        assert expected(name)[4]["InpExpectedTimeframe"] == want
 
 
 @pytest.mark.parametrize("profile_name", sorted(EA_FOR_PROFILE))
@@ -135,31 +187,35 @@ def test_cost_guard_matches_python(profile_name):
     source = inspect.getsource(trader.LiveTrader._open_trade)
     m = re.search(r"cost_r\s*>\s*([0-9.]+)", source)
     assert m, "trader.py da xarajat chegarasi topilmadi"
-    same(read_inputs(EA_FOR_PROFILE[profile_name][1])["InpMaxCostR"],
-         float(m.group(1)), "InpMaxCostR")
+    same(expected(profile_name)[4]["InpMaxCostR"], float(m.group(1)), "InpMaxCostR")
 
 
-def test_the_two_experts_use_different_magic_numbers():
-    """Bir terminalda ikkalasi ishlasa, savdolar aralashib ketmasligi kerak."""
-    btc = read_inputs(EA_FOR_PROFILE["btcusd"][1])["InpMagic"]
-    xau = read_inputs(EA_FOR_PROFILE["xauusd"][1])["InpMagic"]
-    assert btc != xau
+def test_every_expert_uses_a_distinct_magic_number():
+    """Bir terminalda bir nechtasi ishlasa, savdolar aralashib ketmasligi kerak."""
+    magics = [expected(n)[4]["InpMagic"] for n in EA_FOR_PROFILE]
+    assert len(set(magics)) == len(magics), f"magic raqamlar takrorlanmoqda: {magics}"
 
 
-def test_gold_expert_enables_the_weekend_rule():
-    """Oltin dam olish kunlari yopiq — gap stopni chetlab o'tadi."""
-    gold = read_inputs(EA_FOR_PROFILE["xauusd"][1])
-    crypto = read_inputs(EA_FOR_PROFILE["btcusd"][1])
-    assert gold["InpWeekendFlat"] is True
-    assert crypto["InpWeekendFlat"] is False
+def test_gold_experts_enable_the_weekend_rule_on_low_timeframes():
+    """Oltin M5 da hafta oxiriga pozitsiyasiz kiradi; D1 da bu imkonsiz."""
+    assert expected("xau_scalp")[4]["InpWeekendFlat"] is True
+    assert expected("btc_scalp")[4]["InpWeekendFlat"] is False
+    # H4 swing'da hafta chegarasi o'chiriladi — bir bar bir necha kunni qamraydi
+    assert expected("xau_trend")[4]["InpWeekendFlat"] is False
 
 
 def test_gold_volatility_filter_is_far_below_the_crypto_one():
     """Regressiya: BTC filtri oltinda barcha barlarni bloklaydi."""
-    gold = read_inputs(EA_FOR_PROFILE["xauusd"][1])
-    crypto = read_inputs(EA_FOR_PROFILE["btcusd"][1])
-    assert gold["InpMinAtrPct"] < crypto["InpMinAtrPct"] / 3.0
-    assert gold["InpMinStopPct"] < crypto["InpMinStopPct"] / 3.0
+    for gold, crypto in (("xau_scalp", "btc_scalp"), ("xau_trend", "btc_trend")):
+        g, c = expected(gold)[4], expected(crypto)[4]
+        assert g["InpMinAtrPct"] < c["InpMinAtrPct"] / 3.0
+        assert g["InpMinStopPct"] < c["InpMinStopPct"] / 3.0
+
+
+def test_higher_timeframe_experts_use_wider_thresholds():
+    """Volatilitet TF bilan o'sadi — chegaralar ham o'sishi shart."""
+    for scalp, trend in (("btc_scalp", "btc_trend"), ("xau_scalp", "xau_trend")):
+        assert expected(trend)[4]["InpMinAtrPct"] > expected(scalp)[4]["InpMinAtrPct"] * 3
 
 
 # ------------------------------------------------------------ tuzilma
@@ -190,7 +246,7 @@ def test_every_config_field_is_passed_by_the_expert(profile_name):
     block = re.search(r"struct ScalpKitConfig\s*\{(.*?)\n\};", core, re.S)
     declared = set(re.findall(r"^\s*(?:double|int|bool|long|string)\s+(\w+);",
                               block.group(1), re.M))
-    src = EA_FOR_PROFILE[profile_name][1].read_text("utf-8")
+    src = EA_FOR_PROFILE[profile_name][3].read_text("utf-8")
     assigned = set(re.findall(r"g_cfg\.(\w+)\s*=", src))
     assert declared == assigned, (
         f"uzatilmagan: {sorted(declared - assigned)}; "
@@ -198,7 +254,7 @@ def test_every_config_field_is_passed_by_the_expert(profile_name):
     )
 
 
-@pytest.mark.parametrize("path", [CORE, *[p for _, p in EA_FOR_PROFILE.values()]],
+@pytest.mark.parametrize("path", [CORE, *[t[3] for t in EA_FOR_PROFILE.values()]],
                          ids=lambda p: p.name)
 def test_mql_files_have_balanced_delimiters(path):
     """Kompilyatorsiz eng oddiy, lekin foydali tekshiruv."""

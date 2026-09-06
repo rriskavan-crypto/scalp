@@ -26,15 +26,20 @@ sys.path.insert(0, str(ROOT))
 
 from scalpkit.config import Config                     # noqa: E402
 from scalpkit.features import DEFAULT_FEATURE_PARAMS   # noqa: E402
-from scalpkit.profiles import BTCUSD, XAUUSD, Profile  # noqa: E402
+from scalpkit.profiles import BTCUSD, XAUUSD, Profile, for_timeframe  # noqa: E402
 from scalpkit.strategies import get_strategy           # noqa: E402
 
 CORE = ROOT / "mql5" / "Include" / "ScalpKit" / "Core.mqh"
 EXPERTS = ROOT / "mql5" / "Experts"
+PRESETS = ROOT / "mql5" / "Presets"
 
 # EA input nomi -> (turi, qayerdan olinadi, izoh)
 #   "s:" strategiya parametri, "r:" risk, "f:" feature, "c:" doimiy
 SPEC: list[tuple[str, str, str, str]] = [
+    ("=== Strategiya ===", "", "", ""),
+    ("InpStrategyKind",     "int",    "k:kind",               "0 = pullback, 1 = donchian"),
+    ("InpExpectedTimeframe", "ENUM_TIMEFRAMES", "k:tf",        "Preset qaysi TF uchun"),
+
     ("=== Rejim filtrlari ===", "", "", ""),
     ("InpMinAtrPct",        "double", "s:min_atr_pct",        "ATR% minimal"),
     ("InpMaxAtrPct",        "double", "s:max_atr_pct",        "ATR% maksimal"),
@@ -44,7 +49,19 @@ SPEC: list[tuple[str, str, str, str]] = [
     ("InpSessionStartUTC",  "int",    "s:session_start_hour", "Seans boshi (UTC soat)"),
     ("InpSessionEndUTC",    "int",    "s:session_end_hour",   "Seans oxiri (UTC soat)"),
 
-    ("=== Setup ===", "", "", ""),
+    ("=== Yo'nalish ===", "", "", ""),
+    ("InpAllowLong",        "bool",   "s:allow_long",         "Long savdolarga ruxsat"),
+    ("InpAllowShort",       "bool",   "s:allow_short",        "Short savdolarga ruxsat"),
+
+    ("=== Donchian (trendni kuzatish) ===", "", "", ""),
+    ("InpTrendLen",         "int",    "s:trend_len",          "Uzoq muddatli EMA"),
+    ("InpRequireTrendFilter", "bool", "s:require_trend_filter", "Narx EMA ning to'g'ri tomonida"),
+    ("InpEntryLen",         "int",    "s:entry_len",          "Kirish kanali (bar)"),
+    ("InpExitLen",          "int",    "s:exit_len",           "Chiqish kanali (bar)"),
+    ("InpCooldownLen",      "int",    "s:cooldown_len",       "Buzilishlar orasidagi masofa"),
+    ("InpSlAtrMult",        "double", "s:sl_atr_mult",        "Stop masofasi (ATR)"),
+
+    ("=== Setup (pullback) ===", "", "", ""),
     ("InpImpulseLookback",  "int",    "s:impulse_lookback",   "Impuls oynasi (bar)"),
     ("InpImpulseBodyAtr",   "double", "s:impulse_body_atr",   "Impuls tanasi (ATR)"),
     ("InpImpulseVolZ",      "double", "s:impulse_vol_z",      "Impuls hajmi (z-score)"),
@@ -120,7 +137,16 @@ SPEC: list[tuple[str, str, str, str]] = [
     ("InpVerbose",          "bool",   "c:true",               "Batafsil log"),
 ]
 
-MAGIC = {"btcusd": 20260905, "xauusd": 20260906}
+MAGIC = {
+    ("btcusd", "momentum_pullback"): 20260905,
+    ("xauusd", "momentum_pullback"): 20260906,
+    ("btcusd", "donchian_breakout"): 20260907,
+    ("xauusd", "donchian_breakout"): 20260908,
+}
+
+MQL_TIMEFRAME = {"5m": "PERIOD_M5", "15m": "PERIOD_M15", "1h": "PERIOD_H1",
+                 "4h": "PERIOD_H4", "1d": "PERIOD_D1"}
+STRATEGY_KIND = {"momentum_pullback": 0, "donchian_breakout": 1}
 
 
 def _fmt(value, kind: str) -> str:
@@ -134,7 +160,8 @@ def _fmt(value, kind: str) -> str:
     return text + "0" if text.endswith(".") else text
 
 
-def resolve(source: str, profile: Profile, params: dict, risk) -> object:
+def resolve(source: str, profile: Profile, params: dict, risk,
+            strategy_name: str) -> object:
     kind, _, key = source.partition(":")
     if kind == "s":
         if key.endswith("==limit"):
@@ -144,31 +171,56 @@ def resolve(source: str, profile: Profile, params: dict, risk) -> object:
         return getattr(risk, key)
     if kind == "f":
         return DEFAULT_FEATURE_PARAMS[key]
+    if kind == "k":
+        if key == "kind":
+            return STRATEGY_KIND[strategy_name]
+        if key == "tf":
+            return MQL_TIMEFRAME[profile.timeframe]
     if kind == "c":
-        return MAGIC[profile.name] if key == "MAGIC" else key
+        base = profile.name.split("_")[0]
+        return MAGIC[(base, strategy_name)] if key == "MAGIC" else key
     raise ValueError(f"noma'lum manba: {source}")
 
 
-def render(profile: Profile, title: str, note: str) -> str:
-    cfg = profile.apply(Config())
-    params = get_strategy(cfg.strategy.name, cfg.strategy.params).params
+def merged_params(profile: Profile, strategy_name: str) -> dict:
+    """Har ikkala strategiyaning parametrlarini birlashtiradi.
+
+    MQL5 strukturasi barcha maydonlarni talab qiladi, shuning uchun
+    tanlanmagan strategiyaning maydonlari ham to'ldirilishi kerak —
+    ular o'sha strategiyaning standart qiymatlaridan olinadi.
+    """
+    merged: dict = {}
+    for other in ("momentum_pullback", "donchian_breakout"):
+        merged.update(get_strategy(other).params)
+    cfg = profile.apply(Config(), strategy_name)
+    merged.update(get_strategy(strategy_name, cfg.strategy.params).params)
+    return merged
+
+
+def render(profile: Profile, strategy_name: str, title: str, note: str) -> str:
+    cfg = profile.apply(Config(), strategy_name)
+    params = merged_params(profile, strategy_name)
 
     body, assigns = [], []
     for name, ctype, source, comment in SPEC:
         if not ctype:                                  # guruh sarlavhasi
             body.append(f'\ninput group "{name}"')
             continue
-        raw = resolve(source, profile, params, cfg.risk)
-        value = raw if source.startswith("c:") and not str(raw).lstrip("-").isdigit() \
-            else _fmt(raw, ctype)
+        raw = resolve(source, profile, params, cfg.risk, strategy_name)
+        if ctype == "ENUM_TIMEFRAMES" or (
+                source.startswith("c:") and not str(raw).lstrip("-").isdigit()):
+            value = str(raw)
+        else:
+            value = _fmt(raw, ctype)
         pad = " " * max(1, 24 - len(name))
         line = f"input {ctype:<7} {name}{pad}= {value};"
         body.append(f"{line}{'':<{max(1, 46 - len(line))}}// {comment}" if comment else line)
         assigns.append(f"   g_cfg.{name[3:]:<20} = {name};")
 
+    stop_est = 1.5 * float(params["min_atr_pct"]) * profile.typical_price
     spread_note = (
         f"tipik spread {profile.typical_spread:g} @ narx {profile.typical_price:,.0f} "
-        f"-> xarajat ~{profile.typical_spread / (float(params['min_sl_atr']) * 1.4 * float(params['min_atr_pct']) * profile.typical_price):.2f} R"
+        f"-> xarajat ~{profile.typical_spread / stop_est:.3f} R"
     )
     return f'''//+------------------------------------------------------------------+
 //|   {title}
@@ -209,12 +261,44 @@ void OnTesterDeinit()            {{ ScalpKit_OnTesterDeinit(); }}
 '''
 
 
+# (bazaviy profil, timeframe, strategiya, fayl nomi, sarlavha, izoh)
+def render_preset(profile: Profile, strategy_name: str) -> str:
+    """MT5 `.set` fayli — Strategy Tester va grafikdan yuklash uchun."""
+    cfg = profile.apply(Config(), strategy_name)
+    params = merged_params(profile, strategy_name)
+    lines = [f"; ScalpKit preset — {profile.name} / {strategy_name}",
+             f"; timeframe: {profile.timeframe}"]
+    for name, ctype, source, _ in SPEC:
+        if not ctype:
+            continue
+        raw = resolve(source, profile, params, cfg.risk, strategy_name)
+        if ctype == "ENUM_TIMEFRAMES" or (
+                source.startswith("c:") and not str(raw).lstrip("-").isdigit()):
+            continue          # enum va matn qiymatlari presetga kiritilmaydi
+        lines.append(f"{name}={_fmt(raw, ctype)}")
+    return "\n".join(lines) + "\n"
+
+
 TARGETS = [
-    (BTCUSD, "ScalpKit_BTC_M5.mq5", "ScalpKit BTC/USD M5 — tanlab-skalping",
-     "MarketWatch'dagi nom BTCUSDm bo'lishi mumkin — grafikni o'sha nomda oching."),
-    (XAUUSD, "ScalpKit_XAU_M5.mq5", "ScalpKit XAU/USD (oltin) M5 — tanlab-skalping",
+    (BTCUSD, "5m", "momentum_pullback", "ScalpKit_BTC_Scalp.mq5",
+     "ScalpKit BTC/USD — tanlab-skalping (M5/M15)",
+     "MarketWatch'dagi nom BTCUSDm bo'lishi mumkin."),
+    (XAUUSD, "5m", "momentum_pullback", "ScalpKit_XAU_Scalp.mq5",
+     "ScalpKit XAU/USD (oltin) — tanlab-skalping (M5/M15)",
      "Oltin dam olish kunlari yopiq: EA juma kechqurun pozitsiyani yopadi."),
+    (BTCUSD, "4h", "donchian_breakout", "ScalpKit_BTC_Trend.mq5",
+     "ScalpKit BTC/USD — swing / trendni kuzatish (M15-D1)",
+     "MAQSAD QO'YILMAYDI: trend-following foydasi kam sonli katta yutuqlardan keladi."),
+    (XAUUSD, "4h", "donchian_breakout", "ScalpKit_XAU_Trend.mq5",
+     "ScalpKit XAU/USD (oltin) — swing / trendni kuzatish (M15-D1)",
+     "MAQSAD QO'YILMAYDI: trend-following foydasi kam sonli katta yutuqlardan keladi."),
 ]
+
+# Har bir EA uchun tayyor timeframe presetlari
+PRESET_TIMEFRAMES = {
+    "momentum_pullback": ("5m", "15m"),
+    "donchian_breakout": ("15m", "1h", "4h", "1d"),
+}
 
 
 def main() -> int:
@@ -224,9 +308,11 @@ def main() -> int:
     args = ap.parse_args()
 
     EXPERTS.mkdir(parents=True, exist_ok=True)
+    PRESETS.mkdir(parents=True, exist_ok=True)
     stale = []
-    for profile, filename, title, note in TARGETS:
-        text = render(profile, title, note)
+    for base, tf, strategy_name, filename, title, note in TARGETS:
+        profile = for_timeframe(base, tf)
+        text = render(profile, strategy_name, title, note)
         path = EXPERTS / filename
         if args.check:
             if not path.exists() or path.read_text(encoding="utf-8") != text:
@@ -234,7 +320,22 @@ def main() -> int:
         else:
             path.write_text(text, encoding="utf-8")
             n_inputs = len(re.findall(r"^input\s+\w+\s+\w+", text, re.M))
-            print(f"  {filename:<24} {len(text.splitlines()):>4} qator, {n_inputs} input")
+            print(f"  {filename:<26} {len(text.splitlines()):>4} qator, {n_inputs} input")
+
+        # Timeframe presetlari
+        for preset_tf in PRESET_TIMEFRAMES[strategy_name]:
+            pp = for_timeframe(base, preset_tf)
+            body = render_preset(pp, strategy_name)
+            name = f"{filename[:-4]}_{preset_tf.upper()}.set"
+            target = PRESETS / name
+            if args.check:
+                if not target.exists() or target.read_text(encoding="utf-8") != body:
+                    stale.append(name)
+            else:
+                target.write_text(body, encoding="utf-8")
+
+    if not args.check:
+        print(f"  {len(list(PRESETS.glob('*.set')))} ta preset -> {PRESETS.relative_to(ROOT)}/")
 
     if args.check and stale:
         print("ESKIRGAN fayllar:", ", ".join(stale))

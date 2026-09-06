@@ -27,6 +27,13 @@ class CostConfig:
     stop_slippage_bps: float = 3.0  # stop ishlaganda qo'shimcha sirpanish
     funding_rate_8h: float = 0.0001 # perpetual funding, 8 soatlik o'rtacha (0.01 %)
     apply_funding: bool = True
+    # MT5 brokerlarida funding emas, SWAP olinadi — har kecha, notionaldan
+    # ulush sifatida. Swing savdosida bu jiddiy: 10 kunlik pozitsiya
+    # ~0.1R, 30 kunlik ~0.3R turadi. Skalpingda esa deyarli sezilmaydi.
+    # Musbat qiymat = xarajat, manfiy = daromad (short pozitsiyalarda uchraydi).
+    swap_pct_per_day_long: float = 0.0
+    swap_pct_per_day_short: float = 0.0
+    apply_swap: bool = False
 
     def round_trip_bps(self) -> float:
         """Bir to'liq savdoning (kirish + chiqish) taxminiy narxi, bps."""

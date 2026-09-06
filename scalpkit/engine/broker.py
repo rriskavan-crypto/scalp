@@ -43,8 +43,29 @@ def funding_events(start: pd.Timestamp, end: pd.Timestamp) -> int:
 
 def funding_cost(notional: float, side: int, bars: int, start: pd.Timestamp,
                  end: pd.Timestamp, cost: CostConfig) -> float:
-    """Funding to'lovi. Soddalashtirilgan: long doim to'laydi (musbat rate)."""
-    if not cost.apply_funding:
-        return 0.0
-    n = funding_events(start, end)
-    return n * abs(notional) * cost.funding_rate_8h * (1.0 if side > 0 else -1.0)
+    """Ushlab turish xarajati: perpetual funding yoki MT5 swap.
+
+    Skalpingda bu deyarli nolga teng, swing'da esa hal qiluvchi bo'lishi
+    mumkin — D1 da pozitsiya haftalab ochiq turadi.
+    """
+    total = 0.0
+    if cost.apply_funding:
+        n = funding_events(start, end)
+        total += n * abs(notional) * cost.funding_rate_8h * (1.0 if side > 0 else -1.0)
+    if cost.apply_swap:
+        total += swap_cost(notional, side, start, end, cost)
+    return total
+
+
+def swap_nights(start: pd.Timestamp, end: pd.Timestamp) -> int:
+    """Pozitsiya ochiq turgan tunlar soni (kunlik rollover chegaralari)."""
+    if end <= start:
+        return 0
+    return max(0, (end.normalize() - start.normalize()).days)
+
+
+def swap_cost(notional: float, side: int, start: pd.Timestamp,
+              end: pd.Timestamp, cost: CostConfig) -> float:
+    """MT5 swap: har kecha notionaldan ulush sifatida ushlanadi."""
+    rate = (cost.swap_pct_per_day_long if side > 0 else cost.swap_pct_per_day_short)
+    return swap_nights(start, end) * abs(notional) * rate
