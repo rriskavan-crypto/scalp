@@ -199,6 +199,7 @@ EA fayllari `scalpkit/profiles.py` dan **generatsiya qilinadi**
 ajralib keta olmaydi. Buni `tests/test_mql5_parity.py` qulflaydi.
 
 Qo'llanma: **[docs/MQL5_UZ.md](docs/MQL5_UZ.md)**
+Nimani qaysi tartibda sinash kerak: **[docs/TEST_PLAN_UZ.md](docs/TEST_PLAN_UZ.md)**
 
 ### Xulosa qanday chiqadi
 
@@ -329,6 +330,7 @@ docs/
   GOLD_UZ.md         XAUUSD: nima uchun alohida kalibrlash kerak
   MT5_UZ.md          MetaTrader 5 / Exness qo'llanmasi
   MQL5_UZ.md         Expert Advisor: o'rnatish va Strategy Tester
+  TEST_PLAN_UZ.md    SINASH RO'YXATI — 16 presetni tartib bilan tekshirish
 mql5/
   Include/ScalpKit/
     Core.mqh         umumiy savdo mantig'i (ikkala EA uchun)
