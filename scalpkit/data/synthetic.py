@@ -65,8 +65,13 @@ def generate_synthetic(
     trend_drift_ann: float | None = None,
     garch_alpha: float = 0.09,
     garch_beta: float = 0.88,
+    chop_reversion: float = 0.05,   # yon harakatdagi o'rtachaga qaytish kuchi
 ) -> pd.DataFrame:
     """5 daqiqalik OHLCV ma'lumot yaratadi.
+
+    `chop_reversion` — yon harakat rejimiga qo'yiladigan o'rtachaga
+    qaytish kuchi. 0 bo'lsa ma'lumotda hech qanday ustunlik qolmaydi
+    (sof martingale) — strategiyani nazorat qilish uchun ishlatiladi.
 
     `asset="gold"` bo'lsa savdo kalendari qo'llanadi: dam olish kunlari
     va kunlik rollover tanaffusi (21:00-22:00 UTC) chiqarib tashlanadi,
@@ -117,7 +122,11 @@ def generate_synthetic(
             var[i] = omega + garch_alpha * prev_ret**2 + garch_beta * var[i - 1]
         sigma = np.sqrt(var[i])
         # trendda drift bor; yon harakatda o'rtachaga qaytish (mean reversion)
-        mu = drift_step * direction[i] if state[i] == 1 else -0.05 * prev_ret
+        # Yon harakat rejimida AR(1) qaytish: kirituvchi ustunlik.
+        # `chop_reversion = 0` bo'lsa ma'lumot sof martingale bo'ladi —
+        # bu nazorat tajribasi uchun kerak.
+        mu = (drift_step * direction[i] if state[i] == 1
+              else -chop_reversion * prev_ret)
         # GARCH qaytarishi mavsumiylikdan xoli innovatsiyaga tayanadi,
         # aks holda kun ichidagi koeffitsient ikki marta hisoblanib ketadi
         prev_ret = sigma * shocks[i]

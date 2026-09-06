@@ -33,7 +33,11 @@ EA_FOR_PROFILE = {
     "xau_scalp": (XAUUSD, "5m", "momentum_pullback", EXPERTS / "ScalpKit_XAU_Scalp.mq5"),
     "btc_trend": (BTCUSD, "4h", "donchian_breakout", EXPERTS / "ScalpKit_BTC_Trend.mq5"),
     "xau_trend": (XAUUSD, "4h", "donchian_breakout", EXPERTS / "ScalpKit_XAU_Trend.mq5"),
+    "btc_range": (BTCUSD, "4h", "range_reversion", EXPERTS / "ScalpKit_BTC_Range.mq5"),
+    "xau_range": (XAUUSD, "4h", "range_reversion", EXPERTS / "ScalpKit_XAU_Range.mq5"),
 }
+
+STRATEGY_KIND = {"momentum_pullback": 0, "donchian_breakout": 1, "range_reversion": 2}
 
 # Har bir strategiya faqat o'ziga tegishli parametrlar bo'yicha tekshiriladi
 PULLBACK_ONLY = {
@@ -44,7 +48,18 @@ PULLBACK_ONLY = {
 }
 DONCHIAN_ONLY = {
     "InpTrendLen", "InpRequireTrendFilter", "InpEntryLen", "InpExitLen",
-    "InpCooldownLen", "InpSlAtrMult",
+    "InpCooldownLen",
+}
+REVERSION_ONLY = {
+    "InpAdxMax", "InpBandLen", "InpEntryZ", "InpRevRsiLen", "InpRsiOversold",
+    "InpRsiOverbought", "InpRequireReversalBar", "InpSetupLookback",
+    "InpRangeDevAtr", "InpMinTargetR",
+}
+# Har bir strategiya uchun TEKSHIRILMAYDIGAN (boshqasiga tegishli) parametrlar
+SKIP_FOR = {
+    "momentum_pullback": DONCHIAN_ONLY | REVERSION_ONLY | {"InpSlAtrMult"},
+    "donchian_breakout": PULLBACK_ONLY | REVERSION_ONLY,
+    "range_reversion": PULLBACK_ONLY | DONCHIAN_ONLY | {"InpTrendLen"},
 }
 
 STRATEGY_MAP = {
@@ -65,6 +80,13 @@ STRATEGY_MAP = {
     "InpTrailAtrMult": "trail_atr_mult", "InpTrailMinStepAtr": "trail_min_step_atr",
     "InpTimeStopBars": "time_stop_bars", "InpTimeStopMinR": "time_stop_min_r",
     "InpExitOnEmaCross": "exit_on_ema_cross", "InpWeekendFlat": "weekend_flat",
+    "InpSlAtrMult": "sl_atr_mult",
+    "InpAdxMax": "adx_max", "InpBandLen": "band_len", "InpEntryZ": "entry_z",
+    "InpRevRsiLen": "rsi_len", "InpRsiOversold": "rsi_oversold",
+    "InpRsiOverbought": "rsi_overbought",
+    "InpRequireReversalBar": "require_reversal_bar",
+    "InpSetupLookback": "setup_lookback", "InpRangeDevAtr": "range_dev_atr",
+    "InpMinTargetR": "min_target_r",
     "InpWeekCloseHourUTC": "week_close_hour_utc", "InpWeekCloseDow": "week_close_dow",
     "InpWeekOpenSkipBars": "week_open_skip_bars",
 }
@@ -121,7 +143,7 @@ def same(ea_value, py_value, name: str) -> None:
 @pytest.mark.parametrize("profile_name", sorted(EA_FOR_PROFILE))
 def test_strategy_parameters_match(profile_name):
     _, strategy_name, params, _, inputs = expected(profile_name)
-    skip = DONCHIAN_ONLY if strategy_name == "momentum_pullback" else PULLBACK_ONLY
+    skip = SKIP_FOR[strategy_name]
     for ea_name, py_key in STRATEGY_MAP.items():
         if ea_name in skip:
             continue
@@ -152,7 +174,7 @@ def test_limit_entry_matches_entry_mode(profile_name):
 @pytest.mark.parametrize("profile_name", sorted(EA_FOR_PROFILE))
 def test_strategy_kind_matches_the_expert(profile_name):
     _, strategy_name, _, _, inputs = expected(profile_name)
-    assert inputs["InpStrategyKind"] == (1 if strategy_name == "donchian_breakout" else 0)
+    assert inputs["InpStrategyKind"] == STRATEGY_KIND[strategy_name]
 
 
 def test_trend_experts_have_no_profit_target():
@@ -167,6 +189,29 @@ def test_trend_experts_have_no_profit_target():
         assert inputs["InpTp1Fraction"] == 0.0, f"{name}: qisman olish qo'yilgan!"
     for name in ("btc_scalp", "xau_scalp"):
         assert expected(name)[4]["InpTp2R"] > 0.0
+
+
+def test_reversion_experts_require_an_adequate_reward():
+    """Mukofot/risk filtri mean-reversion uchun majburiy.
+
+    Kirish qaytish barida bo'lgani uchun narx allaqachon o'rtachaga
+    yaqinlashgan. Filtrsiz savdolarning 61 % ida mukofot riskdan
+    kichik chiqardi — bunday tuzilma yutqazishga mahkum.
+    """
+    for name in ("btc_range", "xau_range"):
+        inputs = expected(name)[4]
+        assert inputs["InpMinTargetR"] >= 1.0, f"{name}: mukofot/risk filtri yo'q"
+        # Trailing mean-reversion'da qaytishni qaytarib beradi — o'chirilgan
+        assert inputs["InpTrailAfterR"] > 100
+
+
+def test_reversion_and_trend_use_opposite_regimes():
+    """Ikkalasi bir-birini to'ldirishi kerak: biri trendda, biri yon harakatda."""
+    trend = expected("btc_trend")[4]
+    reversion = expected("btc_range")[4]
+    assert reversion["InpAdxMax"] <= 30.0        # yon harakat
+    assert reversion["InpTp2R"] > 0 or reversion["InpMinTargetR"] > 0
+    assert trend["InpTp2R"] == 0.0               # trend — maqsadsiz
 
 
 def test_experts_declare_their_timeframe():

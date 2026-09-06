@@ -131,6 +131,14 @@ def run_backtest(
     ema_fast = features["ema_fast"].to_numpy(float)
     sig_arr = signals["signal"].to_numpy(np.int8)
     stop_arr = signals["stop_price"].to_numpy(float)
+    # Ba'zi strategiyalarda maqsad qat'iy R ko'paytmasi emas, DINAMIK daraja
+    # bo'ladi — masalan mean-reversion'da o'rtacha (Bollinger markazi).
+    # Bunday strategiyalar `target_price` ustunini beradi.
+    target_arr = (
+        signals["target_price"].to_numpy(float)
+        if "target_price" in signals.columns
+        else np.full(len(idx), np.nan)
+    )
     atr_arr = signals["atr"].to_numpy(float)
     entry_ref_arr = (
         signals["entry_ref"].to_numpy(float)
@@ -213,6 +221,7 @@ def run_backtest(
                         pending.side, bar_time, i, pending.limit_price,
                         pending.raw_stop, pending.atr, equity, rm, cost, risk_cfg,
                         min_sl_atr, max_sl_atr, tp1_r, tp2_r, is_maker_entry=True,
+                        target_price=pending.target,
                     )
                     pending = None
                     limit_filled += 1
@@ -237,12 +246,14 @@ def run_backtest(
                     pending = _PendingOrder(
                         side=side, limit_price=float(ref), raw_stop=float(raw_stop),
                         atr=float(atr0), expiry_bar=i + entry_limit_bars - 1,
+                        target=float(target_arr[i - 1]),
                     )
                     if pending.touched(lo[i], hi[i]) and not pending.invalidated(lo[i], hi[i]):
                         pos = _open_position(
                             side, bar_time, i, pending.limit_price, raw_stop, atr0,
                             equity, rm, cost, risk_cfg, min_sl_atr, max_sl_atr,
                             tp1_r, tp2_r, is_maker_entry=True,
+                            target_price=target_arr[i - 1],
                         )
                         pending = None
                         limit_filled += 1
@@ -253,7 +264,7 @@ def run_backtest(
                     pos = _open_position(
                         side, bar_time, i, entry_px, raw_stop, atr0, equity, rm,
                         cost, risk_cfg, min_sl_atr, max_sl_atr, tp1_r, tp2_r,
-                        is_maker_entry=False,
+                        is_maker_entry=False, target_price=target_arr[i - 1],
                     )
                     if pos is not None:
                         rm.on_trade_opened(bar_time)
@@ -312,15 +323,16 @@ class _PendingOrder:
     shuning uchun `entry_mode` parametr sifatida qoldirilgan.
     """
 
-    __slots__ = ("side", "limit_price", "raw_stop", "atr", "expiry_bar")
+    __slots__ = ("side", "limit_price", "raw_stop", "atr", "expiry_bar", "target")
 
     def __init__(self, side: int, limit_price: float, raw_stop: float,
-                 atr: float, expiry_bar: int):
+                 atr: float, expiry_bar: int, target: float = float("nan")):
         self.side = side
         self.limit_price = limit_price
         self.raw_stop = raw_stop
         self.atr = atr
         self.expiry_bar = expiry_bar
+        self.target = target
 
     def touched(self, low: float, high: float) -> bool:
         return low <= self.limit_price if self.side > 0 else high >= self.limit_price
@@ -332,7 +344,8 @@ class _PendingOrder:
 
 def _open_position(side, bar_time, i, entry_px, raw_stop, atr0, equity, rm,
                    cost, risk_cfg, min_sl_atr, max_sl_atr, tp1_r, tp2_r,
-                   is_maker_entry: bool) -> "_Position | None":
+                   is_maker_entry: bool,
+                   target_price: float = float("nan")) -> "_Position | None":
     """Pozitsiya ochadi va hajmni riskka qarab hisoblaydi."""
     dist = _stop_distance(entry_px, raw_stop, side, atr0, min_sl_atr, max_sl_atr,
                           risk_cfg.min_stop_pct, risk_cfg.max_stop_pct)
@@ -346,10 +359,20 @@ def _open_position(side, bar_time, i, entry_px, raw_stop, atr0, equity, rm,
     entry_fee_bps = cost.maker_fee_bps if is_maker_entry else (
         cost.maker_fee_bps if cost.entry_is_maker else cost.taker_fee_bps
     )
+    # Dinamik maqsad berilgan bo'lsa, uni ishlatamiz — lekin faqat
+    # to'g'ri tomonda va kamida 0.2R uzoqlikda bo'lsa (aks holda maqsad
+    # kirish narxining ortida qolib, savdo darhol yopilardi).
+    tp2 = entry_px + side * tp2_r * dist
+    if np.isfinite(target_price):
+        if side * (target_price - entry_px) >= 0.2 * dist:
+            tp2 = target_price
+        else:
+            return None          # maqsad juda yaqin — savdo arzimaydi
+
     return _Position(
         side=side, entry_time=bar_time, entry_i=i, entry_price=entry_px,
         qty=qty, qty_init=qty, stop=entry_px - side * dist,
-        tp1=entry_px + side * tp1_r * dist, tp2=entry_px + side * tp2_r * dist,
+        tp1=entry_px + side * tp1_r * dist, tp2=tp2,
         risk_per_unit=dist, risk_amount=qty * dist, atr0=atr0, tp1_done=False,
         realized_pnl=0.0, fees=abs(qty * entry_px) * entry_fee_bps * 1e-4,
         best_price=entry_px, worst_price=entry_px,

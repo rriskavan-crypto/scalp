@@ -85,6 +85,17 @@ struct ScalpKitConfig
    int      ExitLen;               // chiqish kanali (bar)
    int      CooldownLen;           // buzilishlar orasidagi eng kam masofa
    double   SlAtrMult;             // stop masofasi (ATR)
+   //--- === Range Reversion (o'rtachaga qaytish) ===
+   double   AdxMax;                // bundan yuqorisi trend — savdo yo'q
+   int      BandLen;               // o'rtacha va sigma oynasi
+   double   EntryZ;                // necha sigma chekkada kirish
+   int      RevRsiLen;             // qisqa RSI uzunligi
+   double   RsiOversold;
+   double   RsiOverbought;
+   bool     RequireReversalBar;    // qaytish bari tasdig'i
+   int      SetupLookback;         // setup shuncha bar ichida
+   double   RangeDevAtr;           // EMA dan maks. uzoqlik (ATR)
+   double   MinTargetR;            // mukofot/risk minimal nisbati
    //--- === Hafta chegarasi (oltin/forex uchun) ===
    bool     WeekendFlat;           // Hafta oxiriga pozitsiyasiz kirish
    int      WeekCloseHourUTC;      // Juma shu soatdan keyin yangi savdo yo'q
@@ -116,6 +127,7 @@ CTrade   Trade;
 int      hEmaFast = INVALID_HANDLE, hEmaMid = INVALID_HANDLE, hEmaSlow = INVALID_HANDLE;
 int      hAtr = INVALID_HANDLE, hRsi = INVALID_HANDLE, hAdx = INVALID_HANDLE;
 int      hHtfEma = INVALID_HANDLE, hTrendEma = INVALID_HANDLE;
+int      hRevRsi = INVALID_HANDLE, hStdDev = INVALID_HANDLE, hBandMa = INVALID_HANDLE;
 
 ENUM_TIMEFRAMES g_tf = PERIOD_M5;   // grafik timeframe'i, OnInit da o'rnatiladi
 bool     g_exitLong = false;        // strategiyaning chiqish signali (bar bo'yicha)
@@ -244,11 +256,16 @@ int ScalpKit_OnInit()
    hAdx     = iADX(_Symbol, g_tf, g_cfg.AdxLen);
    hHtfEma  = iMA(_Symbol, PERIOD_H1, g_cfg.HtfEma, 0, MODE_EMA, PRICE_CLOSE);
    hTrendEma = iMA(_Symbol, g_tf, g_cfg.TrendLen, 0, MODE_EMA, PRICE_CLOSE);
+   hRevRsi   = iRSI(_Symbol, g_tf, g_cfg.RevRsiLen, PRICE_CLOSE);
+   hBandMa   = iMA(_Symbol, g_tf, g_cfg.BandLen, 0, MODE_SMA, PRICE_CLOSE);
+   hStdDev   = iStdDev(_Symbol, g_tf, g_cfg.BandLen, 0, MODE_SMA, PRICE_CLOSE);
 
    if(hEmaFast == INVALID_HANDLE || hEmaMid == INVALID_HANDLE ||
       hEmaSlow == INVALID_HANDLE || hAtr == INVALID_HANDLE ||
       hRsi == INVALID_HANDLE || hAdx == INVALID_HANDLE ||
-      hHtfEma == INVALID_HANDLE || hTrendEma == INVALID_HANDLE)
+      hHtfEma == INVALID_HANDLE || hTrendEma == INVALID_HANDLE ||
+      hRevRsi == INVALID_HANDLE || hBandMa == INVALID_HANDLE ||
+      hStdDev == INVALID_HANDLE)
    {
       Print("XATO: indikator handle yaratilmadi. Kod: ", GetLastError());
       return INIT_FAILED;
@@ -285,6 +302,9 @@ void ScalpKit_OnDeinit(const int reason)
    IndicatorRelease(hAdx);
    IndicatorRelease(hHtfEma);
    IndicatorRelease(hTrendEma);
+   IndicatorRelease(hRevRsi);
+   IndicatorRelease(hBandMa);
+   IndicatorRelease(hStdDev);
 }
 
 //------------------------------------------------------------------
@@ -447,6 +467,7 @@ struct SignalResult
    double atr;
    bool   exitLong;      // strategiyaning o'z chiqish signali (Donchian kanali)
    bool   exitShort;
+   double targetPrice;   // dinamik maqsad (mean-reversion uchun; 0 = yo'q)
    string reject;        // qaysi shart bajarilmadi (log uchun)
 };
 
@@ -485,7 +506,7 @@ SignalResult BuildSignalDonchian()
 {
    SignalResult out;
    out.side = 0; out.stopPrice = 0.0; out.entryRef = 0.0; out.atr = 0.0;
-   out.exitLong = false; out.exitShort = false; out.reject = "";
+   out.exitLong = false; out.exitShort = false; out.targetPrice = 0.0; out.reject = "";
 
    const int needBars = g_cfg.EntryLen + g_cfg.CooldownLen + g_cfg.TrendLen + 10;
 
@@ -604,7 +625,7 @@ SignalResult BuildSignalPullback()
 {
    SignalResult out;
    out.side = 0; out.stopPrice = 0.0; out.entryRef = 0.0; out.atr = 0.0;
-   out.exitLong = false; out.exitShort = false; out.reject = "";
+   out.exitLong = false; out.exitShort = false; out.targetPrice = 0.0; out.reject = "";
 
    const int needBars = MathMax(g_cfg.DonchianLen + g_cfg.ImpulseLookback + 5,
                        MathMax(g_cfg.VolZLen + g_cfg.ImpulseLookback + 5, 70));
@@ -794,12 +815,153 @@ SignalResult BuildSignalPullback()
 }
 
 //------------------------------------------------------------------
+//  RANGE REVERSION — o'rtachaga qaytish (trend strategiyasining aksi)
+//
+//  Python dagi `range_reversion` bilan bir xil. Ikkita majburiy blok:
+//    * SETUP va TRIGGER ajratilgan (bitta barda talab qilish mantiqsiz);
+//    * MUKOFOT/RISK filtri — o'rtachagacha masofa stopdan kichik bo'lsa
+//      savdo olinmaydi (filtrsiz savdolarning 61 % i shunday chiqardi).
+//------------------------------------------------------------------
+SignalResult BuildSignalReversion()
+{
+   SignalResult out;
+   out.side = 0; out.stopPrice = 0.0; out.entryRef = 0.0; out.atr = 0.0;
+   out.exitLong = false; out.exitShort = false; out.targetPrice = 0.0; out.reject = "";
+
+   const int needBars = MathMax(g_cfg.BandLen + g_cfg.SetupLookback + 5,
+                                g_cfg.TrendLen + 10);
+
+   MqlRates rates[];
+   ArraySetAsSeries(rates, true);
+   if(CopyRates(_Symbol, g_tf, 0, needBars, rates) < needBars)
+   {
+      out.reject = "barlar yetarli emas";
+      return out;
+   }
+
+   double atr[], adx[], trend[], mid[], sd[], rsi[];
+   const int span = g_cfg.SetupLookback + 2;
+   if(!CopyMany(hAtr, 0, 0, needBars, atr) ||
+      !CopyMany(hAdx, 0, 0, span + 1, adx) ||
+      !CopyMany(hTrendEma, 0, 0, span + 1, trend) ||
+      !CopyMany(hBandMa, 0, 0, span + 1, mid) ||
+      !CopyMany(hStdDev, 0, 0, span + 1, sd) ||
+      !CopyMany(hRevRsi, 0, 0, span + 1, rsi))
+   {
+      out.reject = "indikator ma'lumoti yo'q";
+      return out;
+   }
+
+   const int S = 1;
+   const double a = atr[S], cl = rates[S].close;
+   if(a <= 0.0 || cl <= 0.0 || sd[S] <= 0.0)
+   {
+      out.reject = "ATR yoki sigma noto'g'ri";
+      return out;
+   }
+   out.atr = a;
+
+   //---- rejim: yon harakat ----
+   double atrPct = a / cl;
+   if(atrPct < g_cfg.MinAtrPct || atrPct > g_cfg.MaxAtrPct)
+   {
+      out.reject = "ATR% oynadan tashqarida";
+      return out;
+   }
+   if(adx[S] >= g_cfg.AdxMax)
+   {
+      out.reject = StringFormat("ADX yuqori (%.1f) — trend rejimi", adx[S]);
+      return out;
+   }
+   if(MathAbs(cl - trend[S]) >= g_cfg.RangeDevAtr * a)
+   {
+      out.reject = "uzoq muddatli o'rtachadan juda uzoq";
+      return out;
+   }
+   if(IsPastWeekCutoff(rates[S].time))
+   {
+      out.reject = "hafta chegarasi";
+      return out;
+   }
+   if(g_cfg.UseSession)
+   {
+      int h = UtcHourOf(rates[S].time);
+      bool inSession = (g_cfg.SessionStartUTC <= g_cfg.SessionEndUTC)
+                     ? (h >= g_cfg.SessionStartUTC && h < g_cfg.SessionEndUTC)
+                     : (h >= g_cfg.SessionStartUTC || h < g_cfg.SessionEndUTC);
+      if(!inSession)
+      {
+         out.reject = "seansdan tashqarida";
+         return out;
+      }
+   }
+
+   //---- SETUP: oxirgi barlarda chekkaga chiqilganmi ----
+   bool setupLow = false, setupHigh = false;
+   int from = g_cfg.RequireReversalBar ? S + 1 : S;
+   int to   = g_cfg.RequireReversalBar ? S + g_cfg.SetupLookback : S;
+   for(int i = from; i <= to; i++)
+   {
+      if(sd[i] <= 0.0)
+         continue;
+      double z = (rates[i].close - mid[i]) / sd[i];
+      if(z <= -g_cfg.EntryZ && rsi[i] <= g_cfg.RsiOversold)   setupLow = true;
+      if(z >=  g_cfg.EntryZ && rsi[i] >= g_cfg.RsiOverbought) setupHigh = true;
+   }
+
+   //---- TRIGGER: qaytish bari ----
+   bool longSig  = setupLow  && g_cfg.AllowLong;
+   bool shortSig = setupHigh && g_cfg.AllowShort;
+   if(g_cfg.RequireReversalBar)
+   {
+      longSig  = longSig  && (rates[S].close > rates[S].open);
+      shortSig = shortSig && (rates[S].close < rates[S].open);
+   }
+   if(longSig == shortSig)
+   {
+      if(!longSig)
+         out.reject = "chekka yoki qaytish bari yo'q";
+      return out;
+   }
+
+   int side = longSig ? 1 : -1;
+   double stop   = cl - side * g_cfg.SlAtrMult * a;
+   double target = mid[S];
+
+   //---- MUKOFOT/RISK filtri ----
+   // Mukofot ISHORALI o'lchanadi: qaytish bari o'rtachadan o'tib ketsa,
+   // maqsad savdo yo'nalishining orqasida qoladi. Modul bilan o'lchaganda
+   // bunday savdo filtrdan o'tib ketardi.
+   double reward = side * (target - cl);
+   double risk   = MathAbs(cl - stop);
+   if(reward <= 0.0)
+   {
+      out.reject = "maqsad noto'g'ri tomonda";
+      return out;
+   }
+   if(risk <= 0.0 || reward < g_cfg.MinTargetR * risk)
+   {
+      out.reject = StringFormat("mukofot/risk past (%.2f < %.2f)",
+                                risk > 0 ? reward / risk : 0.0, g_cfg.MinTargetR);
+      return out;
+   }
+
+   out.side        = side;
+   out.stopPrice   = stop;
+   out.entryRef    = cl;
+   out.targetPrice = target;
+   return out;
+}
+
+//------------------------------------------------------------------
 //  Strategiya tanlovchisi
 //------------------------------------------------------------------
 SignalResult BuildSignal()
 {
    if(g_cfg.StrategyKind == 1)
       return BuildSignalDonchian();
+   if(g_cfg.StrategyKind == 2)
+      return BuildSignalReversion();
    return BuildSignalPullback();
 }
 
@@ -1146,7 +1308,14 @@ void TryOpen(const SignalResult &sig)
    int dg = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
    entry  = NormalizeDouble(entry, dg);
    double sl = entry - sig.side * dist;
-   double tp = entry + sig.side * g_cfg.Tp2R * dist;
+   // Dinamik maqsad (mean-reversion) berilgan bo'lsa uni ishlatamiz,
+   // aks holda qat'iy R ko'paytmasi. Tp2R = 0 => maqsad umuman yo'q
+   // (trendni kuzatishda dumni kesmaslik uchun).
+   double tp = 0.0;
+   if(sig.targetPrice > 0.0)
+      tp = sig.targetPrice;
+   else if(g_cfg.Tp2R > 0.0)
+      tp = entry + sig.side * g_cfg.Tp2R * dist;
    ClampStops(sig.side, entry, sl, tp);
 
    string dir = (sig.side > 0) ? "LONG" : "SHORT";

@@ -3,18 +3,23 @@
 **"M5 Momentum Pullback"** — 5 daqiqalik grafikda ishlaydigan
 tanlab-skalping strategiyasi, uni **halol tekshirish** vositalari bilan birga.
 
-**2 instrument x 5 timeframe x 2 strategiya** — har bir kombinatsiya
+**2 instrument x 5 timeframe x 3 strategiya** — har bir kombinatsiya
 alohida kalibrlangan:
 
-| Strategiya | Turi | Tavsiya etilgan TF | Maqsad |
+| Strategiya | Rejim | Tavsiya etilgan TF | Maqsad |
 |---|---|---|---|
 | `momentum_pullback` | trend ichida qaytish | M5, M15 | TP1 1.5R + TP2 3R |
-| `donchian_breakout` | kanal buzilishi (swing) | M15, H1, H4, D1 | **yo'q** — dumni kesmaslik uchun |
+| `donchian_breakout` | **ADX yuqori** (trend) | M15, H1, H4, D1 | **yo'q** — dumni kesmaslik uchun |
+| `range_reversion` | **ADX past** (yon harakat) | H1, H4 | **majburiy** — o'rtacha |
 
-| Instrument | M5 ATR% | Savdo vaqti | MQL5 EA'lari |
+Oxirgi ikkitasi bir-birining aksi: biri trendda, ikkinchisi yon harakatda.
+
+6 ta MQL5 roboti (har biri alohida magic — bir vaqtda ishlay oladi):
+
+| Instrument | Skalping | Trend (swing) | Qaytish |
 |---|---|---|---|
-| BTCUSD | ~0.22 % | 24/7 | `ScalpKit_BTC_Scalp.mq5`, `ScalpKit_BTC_Trend.mq5` |
-| XAUUSD | ~0.07 % | Du–Ju | `ScalpKit_XAU_Scalp.mq5`, `ScalpKit_XAU_Trend.mq5` |
+| BTCUSD | `ScalpKit_BTC_Scalp` | `ScalpKit_BTC_Trend` | `ScalpKit_BTC_Range` |
+| XAUUSD | `ScalpKit_XAU_Scalp` | `ScalpKit_XAU_Trend` | `ScalpKit_XAU_Range` |
 
 ```bash
 python -m scalpkit profiles     # 12 ta profil va ular farqi
@@ -282,7 +287,7 @@ Dvigatel matematikasi testlar bilan tasdiqlangan: nol xarajatda to'liq
 stop **aynan −1.000R** beradi.
 
 ```bash
-python -m pytest tests/ -q      # 169 test
+python -m pytest tests/ -q      # 197 test
 ```
 
 ---
@@ -297,6 +302,7 @@ scalpkit/
   strategies/
     momentum_pullback.py   skalping: trend ichida qaytish
     donchian_breakout.py   swing: kanal buzilishi, maqsadsiz
+    range_reversion.py     swing: o'rtachaga qaytish, maqsad majburiy
   engine/
     backtest.py      bar-bar dvigatel, bracket orderlar, limit kirish
     broker.py        komissiya, sirpanish, funding
@@ -329,9 +335,11 @@ mql5/
   Experts/
     ScalpKit_BTC_Scalp.mq5   BTCUSD skalping (M5/M15)
     ScalpKit_XAU_Scalp.mq5   XAUUSD skalping (M5/M15)
-    ScalpKit_BTC_Trend.mq5   BTCUSD swing (M15-D1)
-    ScalpKit_XAU_Trend.mq5   XAUUSD swing (M15-D1)
-  Presets/                   12 ta timeframe preseti (.set)
+    ScalpKit_BTC_Trend.mq5   BTCUSD swing trend (M15-D1)
+    ScalpKit_XAU_Trend.mq5   XAUUSD swing trend (M15-D1)
+    ScalpKit_BTC_Range.mq5   BTCUSD o'rtachaga qaytish (H1/H4)
+    ScalpKit_XAU_Range.mq5   XAUUSD o'rtachaga qaytish (H1/H4)
+  Presets/                   16 ta timeframe preseti (.set)
 tools/
   gen_mql5_experts.py     EA fayllarini profillardan generatsiya qiladi
 ```

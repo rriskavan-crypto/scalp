@@ -61,6 +61,18 @@ SPEC: list[tuple[str, str, str, str]] = [
     ("InpCooldownLen",      "int",    "s:cooldown_len",       "Buzilishlar orasidagi masofa"),
     ("InpSlAtrMult",        "double", "s:sl_atr_mult",        "Stop masofasi (ATR)"),
 
+    ("=== Range Reversion (o'rtachaga qaytish) ===", "", "", ""),
+    ("InpAdxMax",           "double", "s:adx_max",            "Bundan yuqorisi trend"),
+    ("InpBandLen",          "int",    "s:band_len",           "O'rtacha va sigma oynasi"),
+    ("InpEntryZ",           "double", "s:entry_z",            "Necha sigma chekkada"),
+    ("InpRevRsiLen",        "int",    "s:rsi_len",            "Qisqa RSI uzunligi"),
+    ("InpRsiOversold",      "double", "s:rsi_oversold",       "O'ta sotilgan chegara"),
+    ("InpRsiOverbought",    "double", "s:rsi_overbought",     "O'ta sotib olingan chegara"),
+    ("InpRequireReversalBar", "bool", "s:require_reversal_bar", "Qaytish bari tasdig'i"),
+    ("InpSetupLookback",    "int",    "s:setup_lookback",     "Setup oynasi (bar)"),
+    ("InpRangeDevAtr",      "double", "s:range_dev_atr",      "EMA dan maks. uzoqlik (ATR)"),
+    ("InpMinTargetR",       "double", "s:min_target_r",       "Mukofot/risk minimal nisbati"),
+
     ("=== Setup (pullback) ===", "", "", ""),
     ("InpImpulseLookback",  "int",    "s:impulse_lookback",   "Impuls oynasi (bar)"),
     ("InpImpulseBodyAtr",   "double", "s:impulse_body_atr",   "Impuls tanasi (ATR)"),
@@ -142,11 +154,14 @@ MAGIC = {
     ("xauusd", "momentum_pullback"): 20260906,
     ("btcusd", "donchian_breakout"): 20260907,
     ("xauusd", "donchian_breakout"): 20260908,
+    ("btcusd", "range_reversion"):   20260909,
+    ("xauusd", "range_reversion"):   20260910,
 }
 
 MQL_TIMEFRAME = {"5m": "PERIOD_M5", "15m": "PERIOD_M15", "1h": "PERIOD_H1",
                  "4h": "PERIOD_H4", "1d": "PERIOD_D1"}
-STRATEGY_KIND = {"momentum_pullback": 0, "donchian_breakout": 1}
+STRATEGY_KIND = {"momentum_pullback": 0, "donchian_breakout": 1,
+                 "range_reversion": 2}
 
 
 def _fmt(value, kind: str) -> str:
@@ -190,7 +205,7 @@ def merged_params(profile: Profile, strategy_name: str) -> dict:
     ular o'sha strategiyaning standart qiymatlaridan olinadi.
     """
     merged: dict = {}
-    for other in ("momentum_pullback", "donchian_breakout"):
+    for other in ("momentum_pullback", "donchian_breakout", "range_reversion"):
         merged.update(get_strategy(other).params)
     cfg = profile.apply(Config(), strategy_name)
     merged.update(get_strategy(strategy_name, cfg.strategy.params).params)
@@ -292,12 +307,20 @@ TARGETS = [
     (XAUUSD, "4h", "donchian_breakout", "ScalpKit_XAU_Trend.mq5",
      "ScalpKit XAU/USD (oltin) — swing / trendni kuzatish (M15-D1)",
      "MAQSAD QO'YILMAYDI: trend-following foydasi kam sonli katta yutuqlardan keladi."),
+    (BTCUSD, "4h", "range_reversion", "ScalpKit_BTC_Range.mq5",
+     "ScalpKit BTC/USD — o'rtachaga qaytish (H1-H4)",
+     "Trend strategiyasining aksi: ADX PAST rejimda ishlaydi, maqsad MAJBURIY."),
+    (XAUUSD, "4h", "range_reversion", "ScalpKit_XAU_Range.mq5",
+     "ScalpKit XAU/USD (oltin) — o'rtachaga qaytish (H1-H4)",
+     "Trend strategiyasining aksi: ADX PAST rejimda ishlaydi, maqsad MAJBURIY."),
 ]
 
 # Har bir EA uchun tayyor timeframe presetlari
 PRESET_TIMEFRAMES = {
     "momentum_pullback": ("5m", "15m"),
     "donchian_breakout": ("15m", "1h", "4h", "1d"),
+    # M15 da xarajat qaytish ustunligidan katta chiqdi — preset berilmaydi
+    "range_reversion": ("1h", "4h"),
 }
 
 

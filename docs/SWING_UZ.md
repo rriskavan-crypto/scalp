@@ -33,16 +33,31 @@ python -m scalpkit profiles
 
 ---
 
-## 2. Ikkita strategiya
+## 2. Uchta strategiya
 
-| | `momentum_pullback` | `donchian_breakout` |
-|---|---|---|
-| Turi | trend ichida qaytishni kutish | kanal buzilishi |
-| Kirish | EMA21 ga qaytgach reclaim | N-bar cho'qqisi buzilganda |
-| Maqsad | TP1 1.5R + TP2 3-3.5R | **YO'Q** |
-| Chiqish | trailing + vaqt stopi | trailing + teskari kanal |
-| Tabiati | ko'p savdo, o'rtacha payoff | kam savdo, katta dum |
-| Tavsiya etilgan TF | **M5, M15** | **M15, H1, H4, D1** |
+| | `momentum_pullback` | `donchian_breakout` | `range_reversion` |
+|---|---|---|---|
+| Turi | trend ichida qaytish | kanal buzilishi | o'rtachaga qaytish |
+| Rejim | trend | **ADX yuqori** | **ADX past** |
+| Kirish | EMA21 reclaim | N-bar cho'qqisi buzilganda | chekkada + qaytish bari |
+| Maqsad | TP1 1.5R + TP2 3R | **YO'Q** | **MAJBURIY** (o'rtacha) |
+| Trailing | bor | keng (3 ATR) | **yo'q** |
+| Vaqt stopi | 24 bar | yo'q | **12 bar, so'zsiz** |
+| Imzo | g'alaba ~37 %, payoff ~1.3 | g'alaba ~34 %, payoff ~1.7 | g'alaba ~46 %, payoff ~1.1 |
+| Tavsiya etilgan TF | M5, M15 | M15, H1, H4, D1 | H1, H4 |
+
+`donchian_breakout` va `range_reversion` — **bir-birining aksi**: biri
+trendda, ikkinchisi yon harakatda ishlaydi. Chiqish tuzilmasi ham aks.
+
+### Nima uchun maqsad birida zararli, ikkinchisida majburiy
+
+Trend-following foydasi **dumdan** keladi — kam sonli juda katta yutuqdan.
+Maqsad aynan o'shalarni kesadi.
+
+Mean-reversion ustunligi esa **aniq bir harakatda** — o'rtachaga
+qaytishda. Narx o'rtachaga yetgach, keyingi harakat tasodifiy va ushlab
+turishning asosi yo'q. Maqsadsiz mean-reversion — bu shunchaki
+yo'nalishsiz pozitsiya.
 
 ### Nima uchun `momentum_pullback` H4/D1 da ishlamaydi
 
@@ -142,12 +157,18 @@ Mavjud profillar: `btcusd_5m`, `btcusd_15m`, `btcusd_1h`, `btcusd_4h`,
 
 ### MetaTrader 5
 
-Ikkita swing EA'si:
+Oltita EA — 2 instrument x 3 strategiya:
 
-| Fayl | Instrument | Magic |
-|---|---|---|
-| `ScalpKit_BTC_Trend.mq5` | BTCUSD | 20260907 |
-| `ScalpKit_XAU_Trend.mq5` | XAUUSD | 20260908 |
+| Fayl | Instrument | Strategiya | Magic |
+|---|---|---|---|
+| `ScalpKit_BTC_Scalp.mq5` | BTCUSD | pullback (M5/M15) | 20260905 |
+| `ScalpKit_XAU_Scalp.mq5` | XAUUSD | pullback (M5/M15) | 20260906 |
+| `ScalpKit_BTC_Trend.mq5` | BTCUSD | trend (M15–D1) | 20260907 |
+| `ScalpKit_XAU_Trend.mq5` | XAUUSD | trend (M15–D1) | 20260908 |
+| `ScalpKit_BTC_Range.mq5` | BTCUSD | qaytish (H1/H4) | 20260909 |
+| `ScalpKit_XAU_Range.mq5` | XAUUSD | qaytish (H1/H4) | 20260910 |
+
+Magic raqamlar har xil — oltitasi bir vaqtda ishlay oladi.
 
 Timeframe **grafikdan** olinadi, parametrlar esa presetdan:
 
@@ -199,7 +220,63 @@ eng yaxshi murosa.
 
 ---
 
-## 7. Halol ogohlantirish
+## 7. O'lchangan natijalar — ko'p-seed
+
+Quyidagi jadval **8 ta mustaqil seed** birlashtirilgan holda olingan.
+Ma'lumot sof martingale (`chop_reversion = 0`), ya'ni **ustunlik yo'q**.
+Kutilgan natija — taxminan minus xarajat.
+
+| Profil | Strategiya | Savdo | G'alaba | Payoff | Ekspektatsiya |
+|---|---|---|---|---|---|
+| btcusd_15m | trend | 6336 | 32.1 % | 1.49 | −0.170 |
+| btcusd_1h | trend | 1916 | 34.5 % | 1.66 | −0.067 |
+| btcusd_4h | trend | 553 | 36.5 % | 1.74 | **−0.001** |
+| btcusd_1d | trend | 70 | 34.3 % | 1.53 | −0.107 |
+| btcusd_1h | qaytish | 380 | 45.8 % | 1.12 | −0.028 |
+| xauusd_4h | trend | 625 | 32.2 % | 1.92 | −0.049 |
+| xauusd_1d | trend | 93 | 34.4 % | 1.90 | −0.001 |
+| xauusd_1h | qaytish | 395 | 45.8 % | 1.18 | −0.001 |
+
+**Nima ko'rinyapti:**
+
+1. Barcha natijalar manfiy yoki noldan farq qilmaydi — ustunliksiz
+   ma'lumotda bu **to'g'ri**. Vosita soxta ustunlik ixtiro qilmaydi.
+2. Ekspektatsiya timeframe o'sishi bilan nolga yaqinlashadi
+   (−0.170 → −0.001). Bu aynan xarajat afzalligining namoyon bo'lishi.
+3. Payoff imzolari barqaror: trend 1.49–1.92, qaytish 1.12–1.18.
+
+### Bitta seedga ishonib bo'lmaydi
+
+Ish jarayonida bitta seedda `range_reversion` H4 da **+0.158R**
+ko'rsatgandi. 8 seedda esa **−0.035R**. Farq butunlay shovqin edi.
+
+Bu butun to'plamning mavjud bo'lish sababi: bitta chiroyli backtest
+hech narsani isbotlamaydi.
+
+### Nazorat tajribasi: vosita ustunlikni topa oladimi?
+
+Generatorga ma'lum kuchdagi o'rtachaga qaytish qo'yib, uni topish-topmasligi
+tekshirildi:
+
+| Qo'yilgan qaytish (M5 avtokorrelyatsiya) | H4 da qoladi | Topildimi |
+|---|---|---|
+| 0.00 | 0.014 | — |
+| 0.05 (−0.034) | 0.015 | yo'q |
+| 0.15 (−0.100) | 0.014 | yo'q |
+
+Sabab: qaytish M5 darajasida qo'yilgan va H4 ga o'tganda **bar ichida
+o'rtachalanib yo'qoladi**. Ya'ni H4 da topadigan narsa yo'q edi —
+strategiya to'g'ri hech nima topmadi.
+
+M5 da esa (qaytish avtokorrelyatsiyasi −0.100) strategiya baribir uni
+topa olmadi: ekspektatsiya −0.354R. Sabab — o'sha timeframe'da
+**xarajat qo'yilgan ustunlikdan ancha katta**.
+
+Bu M5 skalping haqidagi dastlabki xulosani mustaqil ravishda tasdiqlaydi.
+
+---
+
+## 8. Halol ogohlantirish
 
 Bu strategiyalarning foyda keltirishi **isbotlanmagan**. O'lchanган va
 isbotlangan narsa:

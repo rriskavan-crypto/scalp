@@ -42,7 +42,19 @@ input bool    InpRequireTrendFilter   = true; // Narx EMA ning to'g'ri tomonida
 input int     InpEntryLen             = 20;   // Kirish kanali (bar)
 input int     InpExitLen              = 10;   // Chiqish kanali (bar)
 input int     InpCooldownLen          = 3;    // Buzilishlar orasidagi masofa
-input double  InpSlAtrMult            = 2.0;  // Stop masofasi (ATR)
+input double  InpSlAtrMult            = 1.5;  // Stop masofasi (ATR)
+
+input group "=== Range Reversion (o'rtachaga qaytish) ==="
+input double  InpAdxMax               = 25.0; // Bundan yuqorisi trend
+input int     InpBandLen              = 20;   // O'rtacha va sigma oynasi
+input double  InpEntryZ               = 2.0;  // Necha sigma chekkada
+input int     InpRevRsiLen            = 2;    // Qisqa RSI uzunligi
+input double  InpRsiOversold          = 10.0; // O'ta sotilgan chegara
+input double  InpRsiOverbought        = 90.0; // O'ta sotib olingan chegara
+input bool    InpRequireReversalBar   = true; // Qaytish bari tasdig'i
+input int     InpSetupLookback        = 3;    // Setup oynasi (bar)
+input double  InpRangeDevAtr          = 4.0;  // EMA dan maks. uzoqlik (ATR)
+input double  InpMinTargetR           = 1.2;  // Mukofot/risk minimal nisbati
 
 input group "=== Setup (pullback) ==="
 input int     InpImpulseLookback      = 12;   // Impuls oynasi (bar)
@@ -141,6 +153,16 @@ void LoadConfig()
    g_cfg.ExitLen              = InpExitLen;
    g_cfg.CooldownLen          = InpCooldownLen;
    g_cfg.SlAtrMult            = InpSlAtrMult;
+   g_cfg.AdxMax               = InpAdxMax;
+   g_cfg.BandLen              = InpBandLen;
+   g_cfg.EntryZ               = InpEntryZ;
+   g_cfg.RevRsiLen            = InpRevRsiLen;
+   g_cfg.RsiOversold          = InpRsiOversold;
+   g_cfg.RsiOverbought        = InpRsiOverbought;
+   g_cfg.RequireReversalBar   = InpRequireReversalBar;
+   g_cfg.SetupLookback        = InpSetupLookback;
+   g_cfg.RangeDevAtr          = InpRangeDevAtr;
+   g_cfg.MinTargetR           = InpMinTargetR;
    g_cfg.ImpulseLookback      = InpImpulseLookback;
    g_cfg.ImpulseBodyAtr       = InpImpulseBodyAtr;
    g_cfg.ImpulseVolZ          = InpImpulseVolZ;
