@@ -20,3 +20,7 @@ data/*.parquet
 out/
 reports/
 !data/.gitkeep
+
+# O'rnatuvchi yaratadigan yorliqlar
+scalpkit.sh
+scalpkit.bat

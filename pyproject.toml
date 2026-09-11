@@ -14,6 +14,13 @@ dependencies = [
     "requests>=2.31",
 ]
 
+[project.optional-dependencies]
+# MetaTrader5 paketi FAQAT Windows uchun mavjud — shuning uchun u asosiy
+# bog'liqliklarda emas. Linux/macOS'da `pip install -e .` ni buzmasligi
+# kerak, aks holda backtest ham ishlamay qoladi.
+mt5 = ["MetaTrader5>=5.0.45; sys_platform == 'win32'"]
+dev = ["pytest>=7.4"]
+
 [project.scripts]
 scalpkit = "scalpkit.cli:main"
 

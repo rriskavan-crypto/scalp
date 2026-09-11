@@ -329,6 +329,7 @@ docs/
   SWING_UZ.md        M15/H1/H4/D1: xarajat afzalligi va trend strategiyasi
   GOLD_UZ.md         XAUUSD: nima uchun alohida kalibrlash kerak
   MT5_UZ.md          MetaTrader 5 / Exness qo'llanmasi
+  INSTALL_UZ.md      O'RNATISH — Windows uchun bitta fayl bilan
   MQL5_UZ.md         Expert Advisor: o'rnatish va Strategy Tester
   TEST_PLAN_UZ.md    SINASH RO'YXATI — 16 presetni tartib bilan tekshirish
 mql5/
