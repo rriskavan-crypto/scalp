@@ -104,15 +104,20 @@ scalpkit validate --profile xauusd_15m --data data\XAUUSD_15m.csv --strategy don
 Doimiy qilish uchun papkada `.env` fayl yarating:
 
 ```
-MT5_PASSWORD=parolingiz
-MT5_LOGIN=474000791
-MT5_SERVER=Exness-MT5Trial15
+MT5_PASSWORD=<parolingiz>
+MT5_LOGIN=<login raqamingiz>
+MT5_SERVER=<server nomi>
 ```
+
+Login va server nomini MT5 da ko'rasiz: **File → Open an Account** yoki
+terminalning chap pastki burchagida.
 
 `.env` fayli `.gitignore` da — u hech qachon GitHub'ga ketmaydi.
 
-> Suhbatda yuborgan parolingizni **almashtiring**. Chatda ko'ringan
-> har qanday parol ishonchsiz hisoblanadi.
+> **Bu repozitoriy OCHIQ (public).** Login, server yoki parolni hech
+> qanday faylga yozmang — faqat `.env` ga. Suhbatda yuborgan
+> parolingizni **almashtiring**: chatda ko'ringan har qanday parol
+> ishonchsiz hisoblanadi.
 
 ---
 
